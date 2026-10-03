@@ -1,0 +1,8 @@
+.venv/
+runs/
+__pycache__/
+*.pyc
+*.egg-info/
+*.wav
+*.mp3
+*.vstpreset

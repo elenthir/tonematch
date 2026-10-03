@@ -1,0 +1,155 @@
+# Knob map: how tonematch interprets plugins and their parameters.
+#
+# Rules are regexes matched case-insensitively. Later files (passed with --knobs) are merged on
+# top of this one, and the first `plugins:` entry whose `match` hits the plugin name wins for the
+# per-plugin overrides. If you already have a hand-made map of your Neural DSP knobs, put it in a
+# file like this (see README "Knob maps") — every list below accepts exact names as well as regexes.
+#
+# Parameter kinds:
+#   primary   searched first and always (gain / tone stack / amp or cab choice)
+#   secondary searched once a chain survives the screening stage
+#   ambience  reverb / delay / modulation — frozen OFF unless you run with --allow-ambience
+#   fixed     set to the given normalised value and never touched
+#   excluded  never touched (left at the plugin default)
+
+roles:                       # plugin name -> role (first hit wins). Used to build candidate chains.
+  amp_suite:                 # all-in-one: pedals + amp + cab + post FX  (one of these is a whole chain)
+    - "archetype"
+    - "neural dsp"
+    - "fortin"
+    - "darkglass"
+    - "soldano"
+    - "amplitube"
+    - "bias fx"
+    - "helix"
+    - "guitar rig"
+    - "th-u"
+    - "tonex"
+    - "overloud"
+    - "gojira"
+    - "nameless"
+    - "omega"
+    - "parallax"
+    - "mesa"
+    - "petrucci"
+    - "plini"
+    - "rabea"
+    - "abasi"
+    - "tim henson"
+    - "cory wong"
+    - "mateus asato"
+    - "nolly"
+    - "morgan"
+    - "mp1"
+  amp:
+    - "\\bamp\\b"
+    - "amplifier"
+    - "bias amp"
+    - "nam\\b"
+    - "neural amp modeler"
+  cab:
+    - "\\bcab"
+    - "\\bir\\b"
+    - "impulse"
+    - "convol"
+    - "two notes"
+    - "wall of sound"
+  drive:
+    - "overdrive"
+    - "distortion"
+    - "\\bfuzz"
+    - "screamer"
+    - "boost"
+    - "\\bdrive\\b"
+    - "klon"
+    - "rat\\b"
+  gate:
+    - "\\bgate\\b"
+  compressor:
+    - "compress"
+  eq:
+    - "\\beq\\b"
+    - "equaliz"
+    - "pro-q"
+    - "reaeq"
+  reverb:
+    - "reverb"
+    - "\\bverb\\b"
+  delay:
+    - "delay"
+    - "echo"
+
+params:                      # defaults applied to every plugin
+  excluded:
+    - "^bypass$"
+    - "^wet$|^dry$|^mix$"     # keep 100 % wet on amp-ish plugins
+    - "^input( gain| level| trim)?$"
+    - "^output( gain| level| trim| volume)?$"
+    - "^(master )?volume$"
+    - "transpose"
+    - "doubler"
+    - "tuner"
+    - "midi"
+    - "preset"
+    - "\\ba/b\\b"
+    - "\\bpan\\b"
+    - "oversampl"
+    - "latency"
+    - "quality"
+    - "stereo|width|spread"
+    - "capture|load|browse|file"
+    - "scene|snapshot"
+    - "metronome|tempo|sync"
+    - "cab.*(active|enable|on/off|bypass)"   # never switch the cab off
+  ambience:
+    - "reverb"
+    - "delay"
+    - "echo"
+    - "chorus"
+    - "flang"
+    - "phas"
+    - "tremolo"
+    - "vibrato"
+    - "wah"
+    - "pitch"
+    - "octav"
+    - "harmon"
+    - "shimmer"
+  primary:
+    - "gain"
+    - "drive"
+    - "\\bbass\\b"
+    - "\\blow\\b"
+    - "\\bmid"
+    - "\\btreble\\b"
+    - "\\bhigh\\b"
+    - "presence"
+    - "depth"
+    - "resonance"
+    - "\\btone\\b"
+    - "contour"
+    - "bright"
+    - "\\btight"
+    - "amp.*(select|type|model|channel)"
+    - "(select|type|model|channel).*amp"
+    - "channel"
+    - "cab.*(select|type|model|ir)"
+    - "(ir|mic).*(select|type|model)"
+    - "mic"
+    - "boost"
+    - "crunch|lead|rhythm|clean"
+    - "\\b(active|enabled?|on/off)\\b"   # section on/off switches (pedals, cab sections, EQ)
+  # everything else is secondary
+
+plugins:
+  - match: "archetype|neural dsp|fortin|darkglass|soldano|gojira|nameless|omega|parallax|mesa|petrucci|plini|rabea|abasi|henson|cory wong|asato|nolly|morgan|mp1"
+    vendor: "Neural DSP"
+    role: amp_suite
+    fixed:                             # name regex -> normalised value
+      "noise gate.*\\b(active|enabled?|on|on/off)\\b": 1.0
+      "(doubler|transpose|tuner).*\\b(active|enabled?|on|on/off)\\b": 0.0
+    excluded:
+      - "gate.*(threshold|release|attack|hold)"   # leave gate at default
+      - "doubler"
+      - "transpose"
+    # ambience sections (delay/reverb) are matched by the global `ambience` rules
