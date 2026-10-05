@@ -49,9 +49,11 @@ class _Vst3Handle:
 
     def __init__(self, info: PluginInfo):
         from pedalboard import load_plugin
+        from .catalog import resolve_plugin_path
         self.info = info
         name = info.name if "::" in info.id else None
-        self.plug = load_plugin(info.path, plugin_name=name) if name else load_plugin(info.path)
+        path = resolve_plugin_path(info.path)
+        self.plug = load_plugin(path, plugin_name=name) if name else load_plugin(path)
         self._by_name = {}
         for py_name, p in self.plug.parameters.items():
             try:

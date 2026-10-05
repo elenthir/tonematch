@@ -52,6 +52,8 @@ roles:                       # plugin name/category -> role. Checked top to bott
     - "spectral|vocoder|freeze"
     - "loudness|lufs"
     - "time stretch|elastique|resampl"
+  modulation:                # chorus / flanger / vibe / phaser / tremolo pedals: not tone, never chained
+    - "chorus|flang|vibe|phas|tremolo|vibrato|rotary|leslie|mistress|terraform|ensemble|dimension"
   amp_suite:                 # all-in-one: pedals + amp + cab + post FX  (one of these is a whole chain)
     - "archetype"
     - "neural dsp"
@@ -78,6 +80,8 @@ roles:                       # plugin name/category -> role. Checked top to bott
     - "nolly"
     - "morgan"
     - "mp1"
+    - "tone king"
+    - "imperial"
   amp:
     - "\\bamp\\b"
     - "amplifier"
@@ -100,6 +104,7 @@ roles:                       # plugin name/category -> role. Checked top to bott
     - "\\bdrive\\b"
     - "klon"
     - "rat\\b"
+    - "muff|screamer|ts-?9|ts-?808|ds-?1|metal zone|od-?1|blues driver|precision drive"
   gate:
     - "\\bgate\\b"
   compressor:
@@ -152,6 +157,13 @@ params:                      # defaults applied to every plugin
     - "octav"
     - "harmon"
     - "shimmer"
+  secondary:                 # checked before `primary`: fine-tuning knobs that are not worth screening on
+    - "\\beq\\b.*(gain|freq|q\\b|band)|band \\d"   # graphic / parametric EQ bands
+    - "(low|high|hi|lo)[ -]?(cut|pass)|hpf|lpf"
+    - "mic.*(position|distance|level|pan|phase|delay)"
+    - "\\blevel\\b|\\bvolume\\b|\\bmix\\b"
+    - "attack|release|hold|ratio|threshold|knee"
+    - "sag|bias|hum|variac|ghost|feedback|compression"
   primary:
     - "gain"
     - "drive"
@@ -160,6 +172,7 @@ params:                      # defaults applied to every plugin
     - "\\bmid"
     - "\\btreble\\b"
     - "\\bhigh\\b"
+    - "\\bhighs?\\b|\\blows?\\b|\\bmids?\\b"
     - "presence"
     - "depth"
     - "resonance"
@@ -182,8 +195,8 @@ plugins:
   - match: "darkglass|parallax"
     vendor: "Neural DSP"
     role: bass
-  - match: "archetype|neural dsp|fortin|soldano|gojira|nameless|omega|mesa|petrucci|plini|rabea|abasi|henson|cory wong|asato|nolly|morgan|mp1"
-    vendor: "Neural DSP"
+  - match: "archetype|neural dsp|fortin|soldano|gojira|nameless|omega|mesa|petrucci|plini|rabea|abasi|henson|cory wong|asato|nolly|morgan|mp1|tone king|mayer"
+    vendor: "Neural DSP"          # the rule also matches "<name> (Neural DSP)", i.e. any Neural DSP plugin
     role: amp_suite
     fixed:                             # name regex -> normalised value
       "noise gate.*\\b(active|enabled?|on|on/off)\\b": 1.0

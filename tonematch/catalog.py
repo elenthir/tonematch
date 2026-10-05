@@ -123,6 +123,26 @@ def find_plugin_files(dirs: Optional[List[str | Path]] = None) -> List[Path]:
     return uniq
 
 
+def resolve_plugin_path(path: str | Path, system: Optional[str] = None) -> str:
+    """A VST3 can be a single file or a bundle folder (``X.vst3/Contents/x86_64-win/X.vst3``).
+    pedalboard on Windows / Linux wants the binary inside the bundle; macOS wants the bundle."""
+    path = Path(path)
+    system = system or platform.system()
+    if not path.is_dir() or system == "Darwin":
+        return str(path)
+    arch_dirs = {"Windows": ("x86_64-win", "arm64-win", "x86-win"),
+                 "Linux": ("x86_64-linux", "aarch64-linux")}.get(system, ())
+    exts = (".vst3",) if system == "Windows" else (".so", ".vst3")
+    contents = path / "Contents"
+    for arch in arch_dirs:
+        d = contents / arch
+        if d.is_dir():
+            for f in sorted(d.iterdir()):
+                if f.is_file() and f.suffix.lower() in exts:
+                    return str(f)
+    return str(path)
+
+
 # ----------------------------------------------------------------------------- probing
 def probe_plugin_file(path: str | Path, timeout: float = 600.0) -> List[PluginInfo]:
     """Load the plugin in a *subprocess* (a crashing plugin must not take the scan down).
@@ -159,13 +179,14 @@ def _probe_in_process(path: str) -> List[dict]:
     import pedalboard
     from pedalboard import load_plugin
     try:
-        names = pedalboard.VST3Plugin.get_plugin_names_for_file(path)
+        names = pedalboard.VST3Plugin.get_plugin_names_for_file(resolve_plugin_path(path))
     except Exception:
         names = [None]
     out = []
     for name in names or [None]:
         try:
-            plug = load_plugin(path, plugin_name=name) if name else load_plugin(path)
+            load_path = resolve_plugin_path(path)
+            plug = load_plugin(load_path, plugin_name=name) if name else load_plugin(load_path)
             out.append(asdict(describe_loaded_plugin(plug, path)))
         except Exception as e:
             stem = Path(path).stem
@@ -209,7 +230,7 @@ def describe_loaded_plugin(plug, path: str, fmt: str = "vst3") -> PluginInfo:
 
 
 def tag_plugin(p: PluginInfo, km: KnobMap) -> None:
-    p.role = km.role_for(p.name, p.category, p.is_instrument)
+    p.role = km.role_for(p.name, p.category, p.is_instrument, p.vendor)
     r = km.rule_for(p.name)
     if r and r.vendor and not p.vendor:
         p.vendor = r.vendor

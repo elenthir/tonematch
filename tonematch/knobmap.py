@@ -78,14 +78,19 @@ class KnobMap:
         self.plugins = new_rules + self.plugins   # later files take precedence
 
     # ------------------------------------------------------------------ queries
-    def rule_for(self, plugin_name: str) -> Optional[PluginRule]:
-        for r in self.plugins:
-            if r.match.search(plugin_name):
-                return r
+    def rule_for(self, plugin_name: str, vendor: str = "") -> Optional[PluginRule]:
+        """First plugin rule whose `match` hits the name — or, failing that, "name (vendor)"."""
+        for hay in (plugin_name, f"{plugin_name} ({vendor})" if vendor else None):
+            if hay is None:
+                continue
+            for r in self.plugins:
+                if r.match.search(hay):
+                    return r
         return None
 
-    def role_for(self, plugin_name: str, category: str = "", is_instrument: bool = False) -> str:
-        r = self.rule_for(plugin_name)
+    def role_for(self, plugin_name: str, category: str = "", is_instrument: bool = False,
+                 vendor: str = "") -> str:
+        r = self.rule_for(plugin_name, vendor)
         if r and r.role:
             return r.role
         if is_instrument:

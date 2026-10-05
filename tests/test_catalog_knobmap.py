@@ -125,3 +125,37 @@ def test_find_plugin_files_dedups_windows_bundles(tmp_path):
     found = sorted(p.name for p in find_plugin_files([tmp_path]))
     assert found == ["Archetype Nolly X.vst3", "Flat.vst3"]
     assert all(p.parent == tmp_path for p in find_plugin_files([tmp_path]))
+
+
+def test_vendor_rule_and_modulation_role():
+    km = KnobMap.load()
+    assert km.role_for("Tone King Imperial MKII", "Fx|Distortion", vendor="Neural DSP") == "amp_suite"
+    assert km.role_for("Some Future Model", "Fx|Distortion", vendor="Neural DSP") == "amp_suite"
+    assert km.role_for("Darkglass Ultra", vendor="Neural DSP") == "bass"
+    assert km.role_for("MixWave EHX Big Muff", vendor="MixWave") == "drive"
+    assert km.role_for("MixWave EHX Electric Mistress") == "modulation"
+    assert km.role_for("Efektor Omnivibe") == "modulation"
+    assert km.role_for("Terraform") == "modulation"
+    cls = lambda n: km.classify_param("Archetype Plini X", n)[0]
+    assert cls("EQ 1 Band 3 Gain") == "secondary"
+    assert cls("Cab 1 Mic 1 Position") == "secondary"
+    assert cls("Cab 1 Mic 1 Type") == "primary"
+    assert cls("Amp 1 Low Cut") == "secondary"
+    assert cls("Pedal 1 Level") == "secondary"
+    assert cls("Amp 2 Gain") == "primary"
+    assert cls("Amp 2 Highs") == "primary"
+
+
+def test_resolve_plugin_path(tmp_path):
+    from tonematch.catalog import resolve_plugin_path
+    b = tmp_path / "NAM.vst3"
+    (b / "Contents" / "x86_64-win").mkdir(parents=True)
+    (b / "Contents" / "x86_64-win" / "NAM.vst3").write_bytes(b"")
+    (b / "Contents" / "x86_64-linux").mkdir()
+    (b / "Contents" / "x86_64-linux" / "NAM.so").write_bytes(b"")
+    assert resolve_plugin_path(b, "Windows").endswith("x86_64-win" + __import__("os").sep + "NAM.vst3")
+    assert resolve_plugin_path(b, "Linux").endswith("NAM.so")
+    assert resolve_plugin_path(b, "Darwin") == str(b)
+    flat = tmp_path / "Flat.vst3"
+    flat.write_bytes(b"")
+    assert resolve_plugin_path(flat, "Windows") == str(flat)
