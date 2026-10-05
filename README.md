@@ -31,6 +31,22 @@ uv pip install yt-dlp                     # optional: pass a YouTube URL as the 
 Neural DSP (and any iLok-licensed) plugins work as long as the licence is active on the machine —
 the plugin checks the licence itself, whichever host loads it.
 
+**Windows + WSL2:** run tonematch on *Windows* (PowerShell), not inside WSL2. The renderer hosts
+the plugins in-process, and a Linux Python can only load Linux VST3 builds — Windows plugin DLLs
+under `/mnt/c/...` are invisible to it. Every dependency has Windows wheels:
+
+```
+winget install astral-sh.uv
+cd tonematch
+uv venv ; uv pip install -e . ; uv pip install demucs
+.venv\Scripts\tonematch scan
+```
+
+If you prefer a WSL shell, keep the checkout on the Windows side and call the Windows
+interpreter from WSL (`/mnt/c/.../tonematch/.venv/Scripts/tonematch.exe …`). Either way the
+generated REAPER script then carries Windows paths for the `.vstpreset` files, which is what
+REAPER needs.
+
 ### 1. Scan your plugins (once)
 
 ```
