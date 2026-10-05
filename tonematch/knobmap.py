@@ -111,8 +111,9 @@ class KnobMap:
             lists.append(("ambience", r.ambience))
             lists.append(("primary", r.primary))
             lists.append(("secondary", r.secondary))
+        # global rules: explicit `secondary` patterns beat the broad `primary` ones ("EQ band gain")
         lists += [("excluded", self.excluded), ("ambience", self.ambience),
-                  ("primary", self.primary), ("secondary", self.secondary)]
+                  ("secondary", self.secondary), ("primary", self.primary)]
         rng = None
         if r:
             for pat, lohi in r.ranges.items():
