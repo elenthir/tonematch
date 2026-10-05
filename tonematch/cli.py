@@ -66,12 +66,23 @@ def _print_catalog(cat: Catalog) -> None:
     for p in cat.plugins.values():
         if not p.error:
             by_role[p.role].append(p)
-    for role in ("amp_suite", "amp", "cab", "drive", "eq", "compressor", "gate", "reverb", "delay", "other"):
+    for role in ("amp_suite", "amp", "cab", "drive", "eq", "compressor", "gate", "reverb", "delay"):
         if by_role.get(role):
             print(f"\n{role}:")
             for p in sorted(by_role[role], key=lambda p: p.name):
                 kinds = {k: sum(1 for q in p.params if q.kind == k) for k in ("primary", "secondary", "ambience", "fixed", "excluded")}
                 print(f"  {p.name:40s} {p.vendor[:18]:18s} knobs: " + " ".join(f"{k}={v}" for k, v in kinds.items() if v))
+    skipped = [(r, p) for r in ("bass", "instrument", "utility", "other") for p in sorted(by_role.get(r, []), key=lambda p: p.name)]
+    if skipped:
+        print("\nnot used in guitar chains (bass → `run --instrument bass`; misfiled? give it a role in a --knobs YAML):")
+        for r, p in skipped:
+            why = r if r != "other" else "unknown kind (not an amp/cab/drive/EQ by name)"
+            print(f"  {p.name:40s} {p.vendor[:18]:18s} {why}")
+    failed = [p for p in cat.plugins.values() if p.error]
+    if failed:
+        print("\nfailed to load:")
+        for p in sorted(failed, key=lambda p: p.name):
+            print(f"  {p.name:40s} {p.error[:90]}")
 
 
 def cmd_list(args) -> None:
@@ -148,7 +159,8 @@ def cmd_run(args) -> None:
                        screen_seconds=args.screen_seconds, optimize_seconds=args.optimize_seconds,
                        refine_seconds=args.refine_seconds,
                        storage=f"sqlite:///{(run_dir / 'optuna.db').resolve()}" if args.resume else None)
-    chains = propose_chains(cat, cfg, include=args.include, exclude=args.exclude, pinned=args.chain)
+    chains = propose_chains(cat, cfg, include=args.include, exclude=args.exclude, pinned=args.chain,
+                            instrument=args.instrument)
     _log("candidate chains:\n   " + "\n   ".join(" > ".join(cat.plugins[s.plugin_id].name for s in c.slots) for c in chains))
 
     from .export import write_checkpoint
@@ -280,6 +292,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include", action="append", help="only chains using plugins whose name contains this (repeatable)")
     p.add_argument("--exclude", action="append", help="never use plugins whose name contains this")
     p.add_argument("--chain", nargs="+", help="use exactly this chain: plugin names in order")
+    p.add_argument("--instrument", choices=["guitar", "bass"], default="guitar",
+                   help="which plugins to build chains from (bass suites are never used for guitar and vice versa)")
     p.add_argument("--max-chains", type=int, default=12)
     p.add_argument("--keep-chains", type=int, default=3)
     p.add_argument("--allow-ambience", action="store_true", help="also search reverb/delay/modulation knobs")

@@ -86,9 +86,14 @@ class SearchResult:
 
 
 # ----------------------------------------------------------------------------- chain proposals
+SKIPPED_ROLES = ("bass", "instrument", "utility", "other")   # never part of a guitar chain
+
+
 def propose_chains(catalog: Catalog, cfg: SearchConfig, include: Optional[List[str]] = None,
-                   exclude: Optional[List[str]] = None, pinned: Optional[List[str]] = None) -> List[ChainSpec]:
-    """Candidate chains from plugin roles. `pinned` = exact list of plugin ids/names → one chain."""
+                   exclude: Optional[List[str]] = None, pinned: Optional[List[str]] = None,
+                   instrument: str = "guitar") -> List[ChainSpec]:
+    """Candidate chains from plugin roles. `pinned` = exact list of plugin ids/names → one chain.
+    `instrument="bass"` builds chains around the bass suites instead of the guitar ones."""
     if pinned:
         ids = []
         for n in pinned:
@@ -109,7 +114,9 @@ def propose_chains(catalog: Catalog, cfg: SearchConfig, include: Optional[List[s
         return True
 
     role = {r: [p for p in catalog.by_role(r) if ok(p)] for r in
-            ("amp_suite", "amp", "cab", "drive", "eq", "compressor", "gate", "reverb", "delay")}
+            ("amp_suite", "amp", "cab", "drive", "eq", "compressor", "gate", "reverb", "delay", "bass")}
+    if instrument == "bass":
+        role["amp_suite"], role["amp"] = role["bass"], []
     chains: List[List[str]] = []
     # tier 1: a suite alone; an amp + a cab
     for s in role["amp_suite"]:
@@ -134,7 +141,8 @@ def propose_chains(catalog: Catalog, cfg: SearchConfig, include: Optional[List[s
     if not chains:  # no amp-ish plugin at all: anything we have, drives first
         pool = role["drive"] + role["eq"] + role["compressor"]
         if not pool:
-            raise SystemExit("no usable plugins in the catalog — run `tonematch scan` (see `tonematch list`)")
+            raise SystemExit("no usable amp/drive/EQ plugin for this instrument in the catalog — see `tonematch list` "
+                             "(a misfiled plugin can be given a role in a --knobs YAML)")
         chains = [[p.id] for p in pool] + [[a.id, b.id] for a in pool for b in pool if a is not b][:6]
     # diversity cap per core (amp/suite) plugin, then global cap
     per_core: Dict[str, int] = {}

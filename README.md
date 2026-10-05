@@ -151,7 +151,12 @@ Finally the incumbent is scored on up to 40 s of DI, and everything is written o
 
 `tonematch/knobs/default.yaml` decides, by regex on plugin and parameter names,
 
-* the **role** of a plugin (`amp_suite`, `amp`, `cab`, `drive`, `eq`, …) → which chains get built,
+* the **role** of a plugin (`amp_suite`, `amp`, `cab`, `drive`, `eq`, …) → which chains get built.
+  Plugins that make no sense in a guitar chain are filed as `bass` (Darkglass, Parallax, Ampeg…),
+  `instrument` (drum / bass / synth instruments, also anything pedalboard itself reports as an
+  instrument), `utility` (tuners, meters, limiters, pitch / vocal / mastering tools) or `other`
+  (unknown), and are never used. `tonematch list` prints them under *not used in guitar chains*;
+  `run --instrument bass` builds chains from the bass suites instead.
 * the **kind** of each parameter: `primary` (searched always), `secondary` (searched once a chain
   survives screening), `ambience` (frozen off unless `--allow-ambience`), `fixed` (set to a value
   and left alone — e.g. Neural DSP's noise gate on, doubler/transpose off), `excluded` (input/output
@@ -164,7 +169,7 @@ as regexes):
 ```yaml
 plugins:
   - match: "Nolly"                 # plugin name regex
-    role: amp_suite
+    role: amp_suite                # also how to rescue a misfiled plugin (e.g. one listed as `other`)
     excluded: ["Amp 1 .*"]         # only search amp 2
     fixed:    {"Amp Select": 1.0}  # normalised 0..1
     ranges:   {"Amp 2 Gain": [0.3, 0.8]}

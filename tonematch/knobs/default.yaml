@@ -12,12 +12,50 @@
 #   fixed     set to the given normalised value and never touched
 #   excluded  never touched (left at the plugin default)
 
-roles:                       # plugin name -> role (first hit wins). Used to build candidate chains.
+roles:                       # plugin name/category -> role. Checked top to bottom, first hit wins.
+  # Roles that are never used in a guitar chain come first, so "Darkglass Ultra" is bass before
+  # it is "amp", and a drum sampler is never mistaken for anything else. Override per plugin with
+  # a `plugins:` entry (`role: amp_suite`) if one of yours is misfiled.
+  instrument:                # synths, samplers, drum / bass / piano instruments (pedalboard's own flag is also used)
+    - "\\binstrument\\b"
+    - "drum"
+    - "\\bkit\\b"
+    - "piano"
+    - "synth"
+    - "sampler"
+    - "kontakt"
+    - "superior"
+    - "addictive"
+    - "ezdrummer|ezbass|ezkeys"
+    - "ggd|get good drums"
+    - "serum|massive|vital|diva|omnisphere|pigments|phase plant"
+    - "neuralnote|neural note"
+    - "modo bass|trilian|ample"
+  bass:                      # bass amp sims / suites
+    - "\\bbass\\b"
+    - "darkglass"
+    - "parallax"
+    - "ampeg|svt"
+    - "b7k|microtubes|alpha omega"
+    - "bassforge|bass rig|rig for bass"
+    - "submission"
+  utility:                   # not tone shaping, or vocal / mastering tools
+    - "tuner"
+    - "meter|analy[sz]er|\\bspan\\b|scope"
+    - "limiter|maximi[sz]er|clipper"
+    - "vocal|voice|auto-?tune|melodyne|de-?ess"
+    - "pitch|transpose|harmoni[sz]er|octaver"
+    - "ozone|neutron|nectar|mastering"
+    - "dither|stereo|imager|mid/side|m/s"
+    - "reatune|reainsert|reafir|reasurround|reavoice|reaxcomp|reacontrolmidi|reajs|reanin"
+    - "noise reduction|denoise|restoration|rx\\b"
+    - "spectral|vocoder|freeze"
+    - "loudness|lufs"
+    - "time stretch|elastique|resampl"
   amp_suite:                 # all-in-one: pedals + amp + cab + post FX  (one of these is a whole chain)
     - "archetype"
     - "neural dsp"
     - "fortin"
-    - "darkglass"
     - "soldano"
     - "amplitube"
     - "bias fx"
@@ -29,7 +67,6 @@ roles:                       # plugin name -> role (first hit wins). Used to bui
     - "gojira"
     - "nameless"
     - "omega"
-    - "parallax"
     - "mesa"
     - "petrucci"
     - "plini"
@@ -142,7 +179,10 @@ params:                      # defaults applied to every plugin
   # everything else is secondary
 
 plugins:
-  - match: "archetype|neural dsp|fortin|darkglass|soldano|gojira|nameless|omega|parallax|mesa|petrucci|plini|rabea|abasi|henson|cory wong|asato|nolly|morgan|mp1"
+  - match: "darkglass|parallax"
+    vendor: "Neural DSP"
+    role: bass
+  - match: "archetype|neural dsp|fortin|soldano|gojira|nameless|omega|mesa|petrucci|plini|rabea|abasi|henson|cory wong|asato|nolly|morgan|mp1"
     vendor: "Neural DSP"
     role: amp_suite
     fixed:                             # name regex -> normalised value

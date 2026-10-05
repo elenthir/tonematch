@@ -84,12 +84,14 @@ class KnobMap:
                 return r
         return None
 
-    def role_for(self, plugin_name: str, category: str = "") -> str:
+    def role_for(self, plugin_name: str, category: str = "", is_instrument: bool = False) -> str:
         r = self.rule_for(plugin_name)
         if r and r.role:
             return r.role
+        if is_instrument:
+            return "instrument"
         hay = f"{plugin_name} {category}"
-        for role, pats in self.roles.items():
+        for role, pats in self.roles.items():       # YAML order = priority
             if any(p.search(hay) for p in pats):
                 return role
         return "other"

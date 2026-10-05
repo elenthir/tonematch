@@ -39,6 +39,7 @@ class PluginInfo:
     role: str = "other"
     params: List[ParamInfo] = field(default_factory=list)
     latency: int = 0
+    is_instrument: bool = False
     error: Optional[str] = None
 
     def param(self, name: str) -> Optional[ParamInfo]:
@@ -109,7 +110,10 @@ def find_plugin_files(dirs: Optional[List[str | Path]] = None) -> List[Path]:
             out.append(d)
             continue
         for ext in ("*.vst3", "*.component"):
-            out.extend(sorted(p for p in d.rglob(ext) if ".vst3/" not in str(p.parent) + "/"))
+            # a .vst3 *bundle* is a folder (Contents/x86_64-win/Plugin.vst3 inside it on Windows):
+            # keep the outermost match only
+            out.extend(sorted(p for p in d.rglob(ext)
+                              if not any(q.suffix.lower() in (".vst3", ".component") for q in p.parents)))
     # de-dup nested matches (a .vst3 bundle contains no other bundles)
     seen, uniq = set(), []
     for p in out:
@@ -121,18 +125,31 @@ def find_plugin_files(dirs: Optional[List[str | Path]] = None) -> List[Path]:
 
 # ----------------------------------------------------------------------------- probing
 def probe_plugin_file(path: str | Path, timeout: float = 600.0) -> List[PluginInfo]:
-    """Load the plugin in a *subprocess* (a crashing plugin must not take the scan down)."""
-    cmd = [sys.executable, "-m", "tonematch.catalog", "--probe", str(path)]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return [PluginInfo(id=Path(path).stem, name=Path(path).stem, path=str(path), error="timeout")]
-    if r.returncode != 0:
-        tail = (r.stderr or "").strip().splitlines()[-3:]
-        return [PluginInfo(id=Path(path).stem, name=Path(path).stem, path=str(path),
-                           error="load failed: " + " | ".join(tail))]
+    """Load the plugin in a *subprocess* (a crashing plugin must not take the scan down).
+
+    The result travels through a temp file rather than stdout: plugins happily print licence
+    banners or debug output to stdout while loading, which would corrupt the JSON."""
+    import tempfile
+    stem = Path(path).stem
+    with tempfile.TemporaryDirectory() as td:
+        out_file = Path(td) / "probe.json"
+        cmd = [sys.executable, "-m", "tonematch.catalog", "--probe", str(path), "--out", str(out_file)]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return [PluginInfo(id=stem, name=stem, path=str(path), error="timeout (a dialog waiting for a click?)")]
+        if not out_file.exists():
+            tail = " | ".join(((r.stderr or "") + (r.stdout or "")).strip().splitlines()[-3:])
+            return [PluginInfo(id=stem, name=stem, path=str(path), error=f"load failed (exit {r.returncode}): {tail}")]
+        try:
+            raw = json.loads(out_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            return [PluginInfo(id=stem, name=stem, path=str(path), error=f"unreadable probe result: {e}")]
     infos = []
-    for d in json.loads(r.stdout):
+    for d in raw:
+        if d.get("error"):
+            infos.append(PluginInfo(id=d.get("id") or stem, name=d.get("name") or stem, path=str(path), error=d["error"]))
+            continue
         d["params"] = [ParamInfo(**p) for p in d["params"]]
         infos.append(PluginInfo(**d))
     return infos
@@ -147,9 +164,13 @@ def _probe_in_process(path: str) -> List[dict]:
         names = [None]
     out = []
     for name in names or [None]:
-        plug = load_plugin(path, plugin_name=name) if name else load_plugin(path)
-        info = describe_loaded_plugin(plug, path)
-        out.append(asdict(info))
+        try:
+            plug = load_plugin(path, plugin_name=name) if name else load_plugin(path)
+            out.append(asdict(describe_loaded_plugin(plug, path)))
+        except Exception as e:
+            stem = Path(path).stem
+            out.append({"id": f"{stem}::{name}" if name else stem, "name": name or stem, "path": path,
+                        "error": f"{type(e).__name__}: {e}"})
     return out
 
 
@@ -183,11 +204,12 @@ def describe_loaded_plugin(plug, path: str, fmt: str = "vst3") -> PluginInfo:
     return PluginInfo(id=f"{Path(path).stem}::{pname}" if pname != Path(path).stem else Path(path).stem,
                       name=pname, path=str(path), vendor=getattr(plug, "manufacturer_name", "") or "",
                       category=getattr(plug, "category", "") or "", format=fmt, params=params,
-                      latency=int(getattr(plug, "reported_latency_samples", 0) or 0))
+                      latency=int(getattr(plug, "reported_latency_samples", 0) or 0),
+                      is_instrument=bool(getattr(plug, "is_instrument", False)))
 
 
 def tag_plugin(p: PluginInfo, km: KnobMap) -> None:
-    p.role = km.role_for(p.name, p.category)
+    p.role = km.role_for(p.name, p.category, p.is_instrument)
     r = km.rule_for(p.name)
     if r and r.vendor and not p.vendor:
         p.vendor = r.vendor
@@ -220,5 +242,9 @@ if __name__ == "__main__":  # subprocess probe entry point
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--probe", required=True)
+    ap.add_argument("--out", required=True)
     a = ap.parse_args()
-    print(json.dumps(_probe_in_process(a.probe)))
+    # keep the plugin's own chatter away from our result
+    sys.stdout = sys.stderr
+    result = _probe_in_process(a.probe)
+    Path(a.out).write_text(json.dumps(result), encoding="utf-8")
