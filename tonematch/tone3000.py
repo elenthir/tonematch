@@ -162,13 +162,20 @@ class Tone3000:
 
         srv = http.server.HTTPServer(("127.0.0.1", REDIRECT_PORT), Handler)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
+        if not client_id.startswith("t3k_pub_"):
+            raise Tone3000Error(f"client id should be the *publishable* key from tone3000.com → Settings → API Keys "
+                                f"(starts with t3k_pub_), got '{client_id[:12]}…'")
         url = self.authorize_url(client_id, challenge, state)
         log(f"open this URL in your browser if it did not open by itself:\n  {url}")
+        log(f"waiting for the redirect to {REDIRECT_URI} (make sure it is registered on the API key). "
+            "If the page shows an error such as invalid_client, press Ctrl+C and check the key.")
         if open_browser:
             webbrowser.open(url)
         try:
             if not done.wait(timeout):
-                raise Tone3000Error("login timed out")
+                raise Tone3000Error("login timed out: the browser never came back to the redirect URI")
+        except KeyboardInterrupt:
+            raise Tone3000Error("login cancelled")
         finally:
             srv.shutdown()
         if result.get("state") != state:
