@@ -25,8 +25,13 @@ reaper.ClearConsole()
 msg("tonematch: applying " .. #CHAIN .. " plugin(s) to track '" ..
     select(2, reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)) .. "'")
 
+local added = 0
 for i, slot in ipairs(CHAIN) do
-  local pos = -1000 - (i - 1)
+  if slot.load_file and slot.load_file ~= "" then
+    msg(string.format("  [%d] FILE TO LOAD BY HAND: %s\n      %s", i, slot.load_file, slot.note or ""))
+  end
+  if slot.name == "" then goto continue end
+  local pos = -1000 - added
   local candidates = { "VST3: " .. slot.name .. " (" .. (slot.vendor or "") .. ")",
                        "VST3: " .. slot.name, slot.name, "VST3i: " .. slot.name, "AU: " .. slot.name }
   local fx = -1
@@ -68,7 +73,9 @@ for i, slot in ipairs(CHAIN) do
     end
     msg(string.format("      %d/%d knobs set by name%s", set, #slot.params,
         #missing > 0 and ("; not found: " .. table.concat(missing, ", ")) or ""))
+    added = added + 1
   end
+  ::continue::
 end
 reaper.Undo_EndBlock("tonematch: apply matched tone", -1)
 msg("tonematch: done. Tweak the output level to taste.")

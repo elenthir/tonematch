@@ -93,6 +93,84 @@ class _Vst3Handle:
             return None
 
 
+class _NamHandle:
+    """A NAM capture: one knob (input gain, ±18 dB), the tone is the capture itself."""
+
+    GAIN_RANGE_DB = 18.0
+
+    def __init__(self, info: PluginInfo):
+        from .namengine import load_nam
+        self.info = info
+        self.model = load_nam(info.path)
+        self.values = {"Input Gain": 0.5}
+
+    def set_raw(self, name: str, v: float) -> None:
+        self.values[name] = float(np.clip(v, 0.0, 1.0))
+
+    def get_raw(self, name: str) -> float:
+        return self.values.get(name, 0.5)
+
+    def gain_db(self) -> float:
+        return (self.values["Input Gain"] - 0.5) * 2 * self.GAIN_RANGE_DB
+
+    def display(self, name: str) -> str:
+        return f"{self.gain_db():+.1f} dB" if name == "Input Gain" else ""
+
+    def process(self, x: np.ndarray, sr: int) -> np.ndarray:
+        g = 10 ** (self.gain_db() / 20.0)
+        return self.model.process(x * g, sr)
+
+    def preset_data(self):
+        return None
+
+
+class _IrHandle:
+    """Cab impulse responses: a categorical choice among the IR library, FFT convolution."""
+
+    MAX_IR_S = 0.5
+
+    def __init__(self, info: PluginInfo):
+        self.info = info
+        self.paths: List[str] = list(info.extra.get("irs", []))
+        self.values = {"IR": 0.0, "Level": 0.5}
+        self._cache: Dict[int, np.ndarray] = {}
+        self._sr = None
+
+    def set_raw(self, name: str, v: float) -> None:
+        self.values[name] = float(np.clip(v, 0.0, 1.0))
+
+    def get_raw(self, name: str) -> float:
+        return self.values.get(name, 0.0)
+
+    def index(self) -> int:
+        return int(round(self.values["IR"] * (len(self.paths) - 1))) if len(self.paths) > 1 else 0
+
+    def current_path(self) -> str:
+        return self.paths[self.index()]
+
+    def display(self, name: str) -> str:
+        return self.current_path().rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if name == "IR" else ""
+
+    def _ir(self, idx: int, sr: int) -> np.ndarray:
+        if self._sr != sr:
+            self._cache.clear()
+            self._sr = sr
+        if idx not in self._cache:
+            from .audio import load_audio
+            ir = load_audio(self.paths[idx], sr)[: int(self.MAX_IR_S * sr)]
+            ir = ir / (np.sqrt(np.sum(ir * ir)) + 1e-9)          # unity energy: level stays comparable
+            self._cache[idx] = ir.astype(np.float32)
+        return self._cache[idx]
+
+    def process(self, x: np.ndarray, sr: int) -> np.ndarray:
+        from scipy.signal import fftconvolve
+        ir = self._ir(self.index(), sr)
+        return fftconvolve(x, ir)[: len(x)].astype(np.float32)
+
+    def preset_data(self):
+        return None
+
+
 class Renderer:
     """Renders a ChainSpec. Plugin instances are cached per thread (plugins are not thread-safe,
     but separate instances can run in parallel since pedalboard releases the GIL while processing)."""
@@ -115,6 +193,10 @@ class Renderer:
             if info.format == "mock":
                 from .mock import MOCK_CLASSES
                 hs[plugin_id] = MOCK_CLASSES[plugin_id]()
+            elif info.format == "nam":
+                hs[plugin_id] = _NamHandle(info)
+            elif info.format == "ir":
+                hs[plugin_id] = _IrHandle(info)
             else:
                 hs[plugin_id] = _Vst3Handle(info)
         return hs[plugin_id]

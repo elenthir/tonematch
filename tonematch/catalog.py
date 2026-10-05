@@ -41,6 +41,7 @@ class PluginInfo:
     latency: int = 0
     is_instrument: bool = False
     error: Optional[str] = None
+    extra: Dict[str, object] = field(default_factory=dict)   # format-specific (NAM metadata, IR list)
 
     def param(self, name: str) -> Optional[ParamInfo]:
         for p in self.params:
@@ -86,6 +87,61 @@ class Catalog:
     def apply_knobmap(self, km: KnobMap) -> None:
         for p in self.plugins.values():
             tag_plugin(p, km)
+
+
+TONEMATCH_HOME = Path(os.environ.get("TONEMATCH_HOME", Path.home() / ".tonematch"))
+NAM_DIR = TONEMATCH_HOME / "nam"
+IR_DIR = TONEMATCH_HOME / "ir"
+IR_LOADER_ID = "irloader"
+
+
+def nam_role(gear: str) -> str:
+    """Which chain slot a capture fills, from its gear type."""
+    if gear in ("amp-cab", "full-rig", "cab-amp"):
+        return "amp_suite"
+    if gear in ("pedal", "outboard"):
+        return "drive"
+    return "amp"                       # amp / preamp / unknown: needs an IR after it
+
+
+def scan_nam_library(nam_dirs: Optional[List[str | Path]] = None,
+                     ir_dirs: Optional[List[str | Path]] = None) -> Dict[str, PluginInfo]:
+    """NAM captures (.nam) and impulse responses (.wav) as catalog entries. Cheap: only metadata
+    is read here, models are built when first rendered."""
+    from .namengine import read_metadata, normalize_gear
+    out: Dict[str, PluginInfo] = {}
+    for d in [Path(x) for x in (nam_dirs or [NAM_DIR])]:
+        if not d.exists():
+            continue
+        for f in sorted(d.rglob("*.nam")):
+            meta = read_metadata(f)
+            gear = normalize_gear(str(meta.get("gear_type") or meta.get("gear") or ""))
+            title = meta.get("title") or meta.get("name") or f.stem
+            bits = [b for b in (meta.get("gear_make"), meta.get("gear_model")) if b and b not in title]
+            name = f"{title} ({' '.join(bits)})" if bits else title
+            pid = "nam:" + str(f.relative_to(d)).replace("\\", "/")
+            out[pid] = PluginInfo(
+                id=pid, name=f"NAM: {name}", path=str(f), vendor=str(meta.get("modeled_by") or meta.get("username") or "NAM"),
+                format="nam", role=nam_role(gear),
+                params=[ParamInfo("Input Gain", "input_gain", "float", 0.5, label="dB", kind="primary")],
+                extra={"gear": gear, "tone_type": meta.get("tone_type"), "tags": meta.get("tags") or [],
+                       "make": meta.get("make") or meta.get("gear_make"), "tone_url": meta.get("url"),
+                       "size": meta.get("size")})
+    irs: List[str] = []
+    for d in [Path(x) for x in (ir_dirs or [IR_DIR])]:
+        if d.exists():
+            irs += [str(f) for f in sorted(d.rglob("*.wav")) + sorted(d.rglob("*.aif*"))]
+    if irs:
+        names = [Path(f).stem[:40] for f in irs]
+        n = len(irs)
+        centers = [i / max(1, n - 1) for i in range(n)] if n > 1 else [0.0]
+        out[IR_LOADER_ID] = PluginInfo(
+            id=IR_LOADER_ID, name="IR Loader", path="ir://", vendor="tonematch", format="ir", role="cab",
+            params=[ParamInfo("IR", "ir", "str", 0.0, n_values=n, values=names if n <= 64 else None,
+                              raw_centers=centers if n <= 64 else None, kind="primary"),
+                    ParamInfo("Level", "level", "float", 0.5, kind="excluded")],
+            extra={"irs": irs})
+    return out
 
 
 def default_plugin_dirs() -> List[Path]:

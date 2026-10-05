@@ -37,6 +37,7 @@ BAD_LOSS = 1e3
 class SearchConfig:
     minutes: float = 30.0
     allow_ambience: bool = False
+    prescreen_frac: float = 0.15     # only used when more chains than max_chains are proposed
     screen_frac: float = 0.22
     optimize_frac: float = 0.53
     refine_frac: float = 0.25
@@ -86,12 +87,35 @@ class SearchResult:
 
 
 # ----------------------------------------------------------------------------- chain proposals
-SKIPPED_ROLES = ("bass", "instrument", "utility", "other")   # never part of a guitar chain
+SKIPPED_ROLES = ("bass", "instrument", "utility", "modulation", "nam_player", "other")   # never part of a guitar chain
+_TONE_WORDS = {"clean": ("clean", "edge", "pristine", "jazz"),
+               "crunch": ("crunch", "overdrive", "breakup", "blues", "rock", "plexi", "classic"),
+               "high": ("high gain", "high-gain", "hi gain", "lead", "metal", "djent", "heavy", "modern", "rhythm")}
+
+
+def prior_score(catalog: Catalog, ids: List[str], gain_class: Optional[str]) -> float:
+    """Cheap relevance of a chain before any render: capture metadata vs the target's gain class,
+    popularity from TONE3000 sidecars. Only used to order chains for the pre-screen."""
+    score = 0.0
+    for i in ids:
+        p = catalog.plugins[i]
+        if p.format != "nam":
+            score += 1.0                       # real plugins: always worth a look
+            continue
+        ex = p.extra or {}
+        hay = " ".join([str(ex.get("tone_type") or ""), " ".join(map(str, ex.get("tags") or [])), p.name]).lower()
+        if gain_class and any(w in hay for w in _TONE_WORDS[gain_class]):
+            score += 1.0
+        elif gain_class and any(w in hay for c, ws in _TONE_WORDS.items() if c != gain_class for w in ws):
+            score -= 0.5
+        score += 0.2 * math.log10(1 + float(ex.get("downloads_count") or 0))
+    return score
 
 
 def propose_chains(catalog: Catalog, cfg: SearchConfig, include: Optional[List[str]] = None,
                    exclude: Optional[List[str]] = None, pinned: Optional[List[str]] = None,
-                   instrument: str = "guitar") -> List[ChainSpec]:
+                   instrument: str = "guitar", gain_class: Optional[str] = None,
+                   limit: Optional[int] = None) -> List[ChainSpec]:
     """Candidate chains from plugin roles. `pinned` = exact list of plugin ids/names → one chain.
     `instrument="bass"` builds chains around the bass suites instead of the guitar ones."""
     if pinned:
@@ -144,7 +168,10 @@ def propose_chains(catalog: Catalog, cfg: SearchConfig, include: Optional[List[s
             raise SystemExit("no usable amp/drive/EQ plugin for this instrument in the catalog — see `tonematch list` "
                              "(a misfiled plugin can be given a role in a --knobs YAML)")
         chains = [[p.id] for p in pool] + [[a.id, b.id] for a in pool for b in pool if a is not b][:6]
-    # diversity cap per core (amp/suite) plugin, then global cap
+    # diversity cap per core (amp/suite) plugin, then global cap (the pre-screen stage of the search
+    # ranks by a real render; here we only order by a cheap prior so the cap keeps the likely ones)
+    chains.sort(key=lambda ids: -prior_score(catalog, ids, gain_class))
+    limit = limit if limit is not None else cfg.max_chains
     per_core: Dict[str, int] = {}
     out: List[ChainSpec] = []
     seen = set()
@@ -156,7 +183,7 @@ def propose_chains(catalog: Catalog, cfg: SearchConfig, include: Optional[List[s
         seen.add(key)
         per_core[core] = per_core.get(core, 0) + 1
         out.append(ChainSpec([Slot(i) for i in ids]))
-        if len(out) >= cfg.max_chains:
+        if len(out) >= limit:
             break
     return out
 
@@ -343,8 +370,29 @@ class ToneSearch:
                          f"HF {self.profile.hf_ratio_db:.1f} dB, dynamics {self.profile.dynamics_db:.1f} dB); "
                          f"{len(chains)} candidate chain(s), budget {cfg.minutes:.1f} min")
 
+        # ---- stage 0: pre-screen when there are more chains than we can afford to screen
+        # (typical with a library of NAM captures): one render each at the "noon" seed, keep the best.
+        if len(chains) > cfg.max_chains:
+            t_pre = total * cfg.prescreen_frac
+            self.on_progress(f"[pre-screen] {len(chains)} chains, one render each, up to {t_pre:.0f}s")
+            scored = []
+            t_end = time.time() + t_pre
+            for ci, chain in enumerate(chains):
+                if time.time() > t_end:
+                    self.on_progress(f"    out of time after {ci} chains; the rest are skipped")
+                    break
+                loss, _ = self.evaluate(self._noon_seed(chain), cfg.screen_seconds, "prescreen")
+                scored.append((loss, chain))
+            scored.sort(key=lambda t: t[0])
+            self.stages.append({"stage": "prescreen", "elapsed": self.elapsed, "n_evals": self.n_evals,
+                                "ranking": [{"chain": c.key, "loss": l} for l, c in scored]})
+            chains = [c for l, c in scored[: cfg.max_chains] if l < BAD_LOSS]
+            self.on_progress("    kept: " + ", ".join(f"{c.key} ({l:.2f})" for l, c in scored[: cfg.max_chains]))
+            total_left = deadline - time.time()
+        else:
+            total_left = total
         # ---- stage A: screen
-        t_screen = total * cfg.screen_frac if len(chains) > 1 else total * 0.12
+        t_screen = total_left * cfg.screen_frac if len(chains) > 1 else total_left * 0.12
         per_chain = t_screen / max(1, len(chains))
         screen_best: Dict[str, Tuple[float, ChainSpec]] = {}
         for ci, chain in enumerate(chains):
@@ -367,7 +415,7 @@ class ToneSearch:
             raise SystemExit("every candidate chain failed to render — check the plugins with `tonematch scan`")
 
         # ---- stage B: optimise survivors with successive halving
-        t_opt_end = self.t0 + total * (cfg.screen_frac + cfg.optimize_frac)
+        t_opt_end = deadline - total_left * cfg.refine_frac
         rounds = max(1, math.ceil(math.log2(len(survivors))) + 1) if len(survivors) > 1 else 1
         studies: Dict[str, Tuple[optuna.Study, List[dict], ChainSpec]] = {}
         alive = list(survivors)

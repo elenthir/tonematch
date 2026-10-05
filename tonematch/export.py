@@ -28,10 +28,37 @@ def write_reaper_script(run_dir: Path, renderer: Renderer, spec: ChainSpec) -> P
     rdir = run_dir / "reaper"
     rdir.mkdir(parents=True, exist_ok=True)
     renderer.apply(spec)
+    if (rdir / "nam").exists():          # a checkpoint of an earlier chain may have left other files
+        shutil.rmtree(rdir / "nam")
     lua_slots = []
+    nam_player = next((p for p in renderer.catalog.plugins.values() if p.role == "nam_player" and not p.error), None)
     for i, slot in enumerate(spec.slots):
         info = renderer.catalog.plugins[slot.plugin_id]
         h = renderer.handle(slot.plugin_id)
+        if info.format in ("nam", "ir"):
+            # the capture / IR is file state, not a knob: copy the file next to the script and tell the
+            # user (and the ReaScript console) what to load into the NAM plugin
+            ndir = rdir / "nam"
+            ndir.mkdir(exist_ok=True)
+            if info.format == "nam":
+                src = Path(info.path)
+                dst = ndir / f"{i + 1:02d}_{_safe(src.stem)}.nam"
+                shutil.copy(src, dst)
+                db = h.gain_db()
+                lua_slots.append(
+                    "  { name = %s, vendor = %s, preset = \"\", load_file = %s, note = %s,\n    params = { {\"Input\", %.6f} } }" % (
+                        _lua_str(nam_player.name if nam_player else "Neural Amp Modeler"),
+                        _lua_str(nam_player.vendor if nam_player else ""), _lua_str(str(dst.resolve())),
+                        _lua_str(f"load this capture in the NAM plugin, input {db:+.1f} dB"),
+                        min(1.0, max(0.0, (db + 20.0) / 40.0))))
+            else:
+                src = Path(h.current_path())
+                dst = ndir / f"{i + 1:02d}_{_safe(src.stem)}{src.suffix}"
+                shutil.copy(src, dst)
+                lua_slots.append(
+                    "  { name = \"\", vendor = \"\", preset = \"\", load_file = %s, note = %s, params = {} }" % (
+                        _lua_str(str(dst.resolve())), _lua_str("load this IR in the NAM plugin's IR slot (or any IR loader)")))
+            continue
         preset_path = ""
         if hasattr(h, "preset_data"):
             data = h.preset_data()

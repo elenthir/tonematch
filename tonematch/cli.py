@@ -14,7 +14,7 @@ import numpy as np
 
 from . import __version__
 from .audio import SR, load_audio, normalize_active_rms, save_audio, synth_di, trim_silence
-from .catalog import Catalog, default_plugin_dirs, scan
+from .catalog import Catalog, default_plugin_dirs, scan, scan_nam_library, NAM_DIR, IR_DIR
 from .chain import ChainSpec, Renderer, Slot
 from . import features as F
 from .knobmap import KnobMap
@@ -32,10 +32,14 @@ def load_catalog(args) -> Catalog:
         from .mock import mock_catalog
         return mock_catalog()
     path = Path(args.catalog)
-    if not path.exists():
-        raise SystemExit(f"no plugin catalog at {path} — run `tonematch scan` first (or use --mock to try things out)")
-    cat = Catalog.load(path)
+    cat = Catalog.load(path) if path.exists() else Catalog()
     cat.apply_knobmap(KnobMap.load(args.knobs))
+    nam_dirs = [NAM_DIR] + [Path(d) for d in (getattr(args, "nam_dir", None) or [])]
+    ir_dirs = [IR_DIR] + [Path(d) for d in (getattr(args, "ir_dir", None) or [])]
+    cat.plugins.update(scan_nam_library(nam_dirs, ir_dirs))     # cheap, always fresh
+    if not cat.plugins:
+        raise SystemExit(f"no plugin catalog at {path} and no NAM captures in {NAM_DIR} — run `tonematch scan`, "
+                         "`tonematch tone3000 fetch …`, or use --mock to try things out")
     return cat
 
 
@@ -70,13 +74,22 @@ def _print_catalog(cat: Catalog) -> None:
         if by_role.get(role):
             print(f"\n{role}:")
             for p in sorted(by_role[role], key=lambda p: p.name):
+                if p.format == "nam":
+                    ex = p.extra or {}
+                    print(f"  {p.name[:40]:40s} {p.vendor[:18]:18s} capture: {ex.get('gear') or '?'} {ex.get('tone_type') or ''} "
+                          f"{'#' + ' #'.join(map(str, ex.get('tags')[:4])) if ex.get('tags') else ''}")
+                    continue
+                if p.format == "ir":
+                    print(f"  {p.name:40s} {p.vendor[:18]:18s} {len(p.extra.get('irs', []))} impulse responses")
+                    continue
                 kinds = {k: sum(1 for q in p.params if q.kind == k) for k in ("primary", "secondary", "ambience", "fixed", "excluded")}
                 print(f"  {p.name:40s} {p.vendor[:18]:18s} knobs: " + " ".join(f"{k}={v}" for k, v in kinds.items() if v))
-    skipped = [(r, p) for r in ("bass", "instrument", "utility", "other") for p in sorted(by_role.get(r, []), key=lambda p: p.name)]
+    skipped = [(r, p) for r in ("nam_player", "bass", "instrument", "utility", "modulation", "other") for p in sorted(by_role.get(r, []), key=lambda p: p.name)]
     if skipped:
         print("\nnot used in guitar chains (bass → `run --instrument bass`; misfiled? give it a role in a --knobs YAML):")
         for r, p in skipped:
-            why = r if r != "other" else "unknown kind (not an amp/cab/drive/EQ by name)"
+            why = {"other": "unknown kind (not an amp/cab/drive/EQ by name)",
+                   "nam_player": "NAM plugin: used to load the matched capture in REAPER"}.get(r, r)
             print(f"  {p.name:40s} {p.vendor[:18]:18s} {why}")
     failed = [p for p in cat.plugins.values() if p.error]
     if failed:
@@ -130,6 +143,10 @@ def cmd_run(args) -> None:
     run_dir = Path(args.out)
     run_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.WARNING, filename=str(run_dir / "run.log"))
+    if args.tone3000:
+        from .tone3000 import Tone3000
+        _log(f"TONE3000: fetching up to {args.tone3000_limit} captures for '{args.tone3000}' …")
+        Tone3000().fetch(args.tone3000, limit=args.tone3000_limit, log=_log)
     cat = load_catalog(args)
     renderer = Renderer(cat)
 
@@ -159,8 +176,9 @@ def cmd_run(args) -> None:
                        screen_seconds=args.screen_seconds, optimize_seconds=args.optimize_seconds,
                        refine_seconds=args.refine_seconds,
                        storage=f"sqlite:///{(run_dir / 'optuna.db').resolve()}" if args.resume else None)
+    gain_class = F.TargetProfile.from_features(target).gain_class
     chains = propose_chains(cat, cfg, include=args.include, exclude=args.exclude, pinned=args.chain,
-                            instrument=args.instrument)
+                            instrument=args.instrument, gain_class=gain_class, limit=max(cfg.max_chains, args.max_prescreen))
     _log("candidate chains:\n   " + "\n   ".join(" > ".join(cat.plugins[s.plugin_id].name for s in c.slots) for c in chains))
 
     from .export import write_checkpoint
@@ -243,6 +261,32 @@ def cmd_selftest(args) -> None:
         sys.exit(1)
 
 
+def cmd_tone3000_login(args) -> None:
+    from .tone3000 import Tone3000, REDIRECT_URI
+    if not args.client_id:
+        raise SystemExit("need --client-id t3k_pub_… : create an API key on tone3000.com → Settings → API Keys and "
+                         f"register the redirect URI {REDIRECT_URI}")
+    Tone3000().login(args.client_id, open_browser=not args.no_browser, log=_log)
+    _log("logged in to TONE3000")
+
+
+def cmd_tone3000_search(args) -> None:
+    from .tone3000 import Tone3000
+    res = Tone3000().search(args.query, gears=args.gears, sizes=args.sizes, sort=args.sort, page_size=args.limit)
+    print(f"{res.get('total', '?')} tones match '{args.query}'")
+    for t in res.get("data", []):
+        makes = ", ".join(x.get("name", "") for x in t.get("makes") or [])
+        print(f"  #{t.get('id'):<7} {str(t.get('title'))[:50]:50s} {str(t.get('gear') or ''):9s} {makes[:20]:20s} "
+              f"↓{t.get('downloads_count', 0)} ♥{t.get('favorites_count', 0)}")
+
+
+def cmd_tone3000_fetch(args) -> None:
+    from .tone3000 import Tone3000
+    files = Tone3000().fetch(args.query, limit=args.limit, gears=args.gears, sizes=args.sizes, sort=args.sort,
+                             with_irs=not args.no_irs, log=_log)
+    _log(f"{len(files)} file(s) in the library ({NAM_DIR}, {IR_DIR}); `tonematch list` shows them")
+
+
 # ----------------------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="tonematch", description=__doc__)
@@ -253,6 +297,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--catalog", default=str(DEFAULT_CATALOG), help="plugin catalog JSON (default %(default)s)")
         p.add_argument("--knobs", action="append", default=[], help="extra knob-map YAML (repeatable)")
         p.add_argument("--mock", action="store_true", help="use the built-in mock plugins instead of the catalog")
+        if p.prog.endswith(("list", "export", "scan")):
+            p.add_argument("--nam-dir", action="append", help="extra folder(s) of .nam captures")
+            p.add_argument("--ir-dir", action="append", help="extra folder(s) of impulse responses (.wav)")
 
     p = sub.add_parser("scan", help="scan your VST3/AU plugins and build the catalog")
     p.add_argument("paths", nargs="*", help="plugin folders or bundles (default: the OS standard folders)")
@@ -294,7 +341,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--chain", nargs="+", help="use exactly this chain: plugin names in order")
     p.add_argument("--instrument", choices=["guitar", "bass"], default="guitar",
                    help="which plugins to build chains from (bass suites are never used for guitar and vice versa)")
-    p.add_argument("--max-chains", type=int, default=12)
+    p.add_argument("--max-chains", type=int, default=12, help="chains that get a full screening run")
+    p.add_argument("--max-prescreen", type=int, default=300, help="chains (e.g. NAM captures) ranked with one render first")
+    p.add_argument("--tone3000", metavar="QUERY", help="fetch captures from TONE3000 for this query before matching")
+    p.add_argument("--tone3000-limit", type=int, default=15)
+    p.add_argument("--nam-dir", action="append", help="extra folder(s) of .nam captures")
+    p.add_argument("--ir-dir", action="append", help="extra folder(s) of impulse responses (.wav)")
     p.add_argument("--keep-chains", type=int, default=3)
     p.add_argument("--allow-ambience", action="store_true", help="also search reverb/delay/modulation knobs")
     p.add_argument("--aligned", action="store_true", help="DI is the *same riff* as the target: add an aligned spectral loss")
@@ -306,6 +358,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=0)
     common(p)
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("tone3000", help="TONE3000: login, search and fetch NAM captures / IRs")
+    t = p.add_subparsers(dest="t3k_cmd", required=True)
+    q = t.add_parser("login", help="OAuth login (needs a publishable key from tone3000.com → Settings → API Keys)")
+    q.add_argument("--client-id", default=os.environ.get("TONE3000_CLIENT_ID"), help="t3k_pub_… (or env TONE3000_CLIENT_ID)")
+    q.add_argument("--no-browser", action="store_true")
+    q.set_defaults(func=cmd_tone3000_login)
+    q = t.add_parser("search", help="search tones")
+    q.add_argument("query")
+    q.add_argument("--gears", nargs="+", default=["amp", "amp-cab", "full-rig"])
+    q.add_argument("--sizes", nargs="+")
+    q.add_argument("--sort", default="downloads-all-time")
+    q.add_argument("--limit", type=int, default=20)
+    q.set_defaults(func=cmd_tone3000_search)
+    q = t.add_parser("fetch", help="download the best-sized model of the top tones into the library")
+    q.add_argument("query")
+    q.add_argument("--limit", type=int, default=15)
+    q.add_argument("--gears", nargs="+", default=["amp", "amp-cab", "full-rig"])
+    q.add_argument("--sizes", nargs="+", help="e.g. standard lite")
+    q.add_argument("--sort", default="downloads-all-time")
+    q.add_argument("--no-irs", action="store_true")
+    q.set_defaults(func=cmd_tone3000_fetch)
 
     p = sub.add_parser("export", help="re-generate the REAPER script / presets of a run")
     p.add_argument("run_dir")

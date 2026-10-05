@@ -52,6 +52,8 @@ roles:                       # plugin name/category -> role. Checked top to bott
     - "spectral|vocoder|freeze"
     - "loudness|lufs"
     - "time stretch|elastique|resampl"
+  nam_player:                # the NAM plugin itself: used to *load* a capture in REAPER, never searched blind
+    - "neural ?amp ?modeler|neuralampmodeler"
   modulation:                # chorus / flanger / vibe / phaser / tremolo pedals: not tone, never chained
     - "chorus|flang|vibe|phas|tremolo|vibrato|rotary|leslie|mistress|terraform|ensemble|dimension"
   amp_suite:                 # all-in-one: pedals + amp + cab + post FX  (one of these is a whole chain)

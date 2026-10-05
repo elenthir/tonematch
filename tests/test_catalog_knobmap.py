@@ -76,18 +76,19 @@ def test_bass_instrument_utility_roles_are_kept_out_of_guitar_chains():
     assert km.role_for("Pro-L 2 Limiter") == "utility"
     assert km.role_for("ReaTune") == "utility"
     assert km.role_for("Archetype Nolly X") == "amp_suite"
-    assert km.role_for("Neural Amp Modeler") == "amp"
+    assert km.role_for("Neural Amp Modeler") == "nam_player"
+    assert km.role_for("Nice Amp 2") == "amp"
     assert km.role_for("Soundshed Guitar") == "other"       # unknown: listed, never chained
 
     from tonematch.catalog import Catalog, PluginInfo, ParamInfo
     from tonematch.search import SearchConfig, propose_chains
     cat = Catalog()
-    for name in ("Archetype Nolly X", "Darkglass Ultra", "Superior Drummer 3", "ReaTune", "Neural Amp Modeler", "Some Cab IR"):
+    for name in ("Archetype Nolly X", "Darkglass Ultra", "Superior Drummer 3", "ReaTune", "Nice Amp 2", "Some Cab IR"):
         p = PluginInfo(id=name, name=name, path=name, params=[ParamInfo("Gain", "gain", "float", 0.5)])
         tag_plugin(p, km)
         cat.plugins[name] = p
     keys = [c.key for c in propose_chains(cat, SearchConfig())]
-    assert "Archetype Nolly X" in keys and "Neural Amp Modeler > Some Cab IR" in keys
+    assert "Archetype Nolly X" in keys and "Nice Amp 2 > Some Cab IR" in keys
     assert not any(("Darkglass" in k or "Drummer" in k or "ReaTune" in k) for k in keys)
     bass_keys = [c.key for c in propose_chains(cat, SearchConfig(), instrument="bass")]
     assert bass_keys == ["Darkglass Ultra"]

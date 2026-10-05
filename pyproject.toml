@@ -13,11 +13,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+nam = ["torch>=2.1"]                                   # run NAM captures natively (classic format)
+nam-a2 = ["torch>=2.1", "neural-amp-modeler>=0.13"]    # + the newer A2 capture format
 separate = ["demucs>=4.0", "torch>=2.1", "torchaudio>=2.1"]
 download = ["yt-dlp>=2024.4"]
 
 [dependency-groups]
-dev = ["pytest>=8", "lupa>=2.0"]
+dev = ["pytest>=8", "lupa>=2.0", "torch>=2.1"]
 
 [project.scripts]
 tonematch = "tonematch.cli:main"

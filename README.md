@@ -117,6 +117,43 @@ reports in the ReaScript console what it could not find. Output level is deliber
 matched — set it to taste. If REAPER names a plugin differently from what the script tried, add
 the plugin to the track by hand first and re-run the script: it re-uses what's on the track.
 
+## NAM captures and TONE3000
+
+Neural Amp Modeler captures are the largest library of tones there is, and their "tone" is the
+capture file, not a knob. tonematch runs `.nam` files **natively** (a torch port of the reference
+WaveNet / LSTM, checked bit-for-bit against the official implementation), so hundreds of captures
+can be auditioned without ever opening the NAM plugin. Install the extra:
+
+```
+uv pip install -e ".[nam]"            # torch; add ".[nam-a2]" for the newer A2 capture format
+```
+
+The library lives in `~/.tonematch/nam/` (captures, any sub-folders) and `~/.tonematch/ir/`
+(impulse responses, .wav). Drop files there, or point at other folders with `--nam-dir` /
+`--ir-dir`. Every capture becomes a catalog entry: amp-only captures (`gear: amp`) are chained
+into an **IR Loader** whose IR choice is searched like any other knob; `amp-cab` / full-rig
+captures stand alone; pedal captures go in front of an amp. The only knob of a capture is its
+input gain (±18 dB), which matters because captures are calibrated to a particular input level.
+
+With more captures than `--max-chains`, a **pre-screen** stage renders each candidate once at a
+sensible starting point (ordered by how well the capture's tags match the target's gain class and
+by popularity) and keeps the best `--max-chains` for the real search.
+
+**TONE3000** (tone3000.com) is where the captures come from. Its API needs a login:
+
+1. On tone3000.com → Settings → API Keys, create a key and register the redirect URI
+   `http://localhost:3927/callback`. The publishable key `t3k_pub_…` is the client id.
+2. `tonematch tone3000 login --client-id t3k_pub_…` (opens the browser once; tokens are kept in
+   `~/.tonematch/tone3000.json` and refreshed automatically).
+3. `tonematch tone3000 search "5150"`, `tonematch tone3000 fetch "5150" --limit 15` — downloads
+   the best-sized model of each tone (standard > lite > feather > nano) with a metadata sidecar,
+   plus a few IRs when the IR folder is empty. `tonematch run --tone3000 "5150" …` does the fetch
+   and the match in one go.
+
+The REAPER export copies the chosen capture and IR into `reaper/nam/` and the script prints the
+file to load into the NAM plugin (the model is file state the API cannot set), and sets its input
+knob.
+
 ## How the search works
 
 **Target description.** Both signals are loudness-normalised and only the active frames are
