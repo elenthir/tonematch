@@ -267,6 +267,8 @@ class ToneSearch:
                     continue
                 name = f"{si}|{p.name}"
                 grp = {"group": p.group, "selector": p.group_selector} if p.group else {}
+                if p.gates:
+                    grp["gates"] = list(p.gates)
                 if p.n_values and p.n_values > 1 and p.type != "float" or (p.n_values and p.n_values <= 12):
                     if inc is not None:    # refine: freeze discrete choices
                         continue
@@ -285,9 +287,25 @@ class ToneSearch:
                     lo, hi = max(lo, c - hw), min(hi, c + hw)
                 out.append({"name": name, "slot": si, "param": p.name, "kind": "float", "lo": lo, "hi": hi, **grp})
         # selectors first, so grouped knobs can be made conditional on them
+        # selectors and switches first, so grouped / gated knobs can be made conditional on them
         selectors = {(e["slot"], e["selector"]) for e in out if e.get("selector")}
-        out.sort(key=lambda d: 0 if (d["slot"], d["param"]) in selectors else 1)
+        switches = {(e["slot"], g) for e in out for g in e.get("gates", [])}
+
+        def rank(d):
+            key = (d["slot"], d["param"])
+            return (0 if key in selectors else 1 if key in switches else 2, len(d.get("gates", [])))
+        out.sort(key=rank)
         return out
+
+    def _switch_on(self, slot_idx: int, switch: str, chosen: Dict[tuple, float], base: ChainSpec) -> bool:
+        info = self.catalog.plugins[base.slots[slot_idx].plugin_id]
+        sw = info.param(switch)
+        if sw is None:
+            return True
+        raw = chosen.get((slot_idx, switch))
+        if raw is None:
+            raw = base.slots[slot_idx].params.get(switch, sw.fixed_value if sw.kind == "fixed" else sw.default)
+        return float(raw) >= 0.5
 
     def _selected_group(self, slot_idx: int, selector: str, chosen: Dict[tuple, float], base: ChainSpec) -> Optional[str]:
         """Display value of a channel selector: from this trial, else the base spec, else the default."""
@@ -308,6 +326,8 @@ class ToneSearch:
             if d.get("group"):
                 if self._selected_group(d["slot"], d["selector"], chosen, base) != d["group"]:
                     continue                      # knob of a channel that is not selected: untouched
+            if any(not self._switch_on(d["slot"], g, chosen, base) for g in d.get("gates", [])):
+                continue                          # knob behind a switch that is off: untouched
             if d["kind"] == "float":
                 v = trial.suggest_float(d["name"], d["lo"], d["hi"])
             elif d["kind"] == "cat":

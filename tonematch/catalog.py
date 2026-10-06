@@ -29,6 +29,7 @@ class ParamInfo:
     range: Optional[List[float]] = None       # narrowed normalised search range
     group: Optional[str] = None               # channel this knob belongs to ("Clean", "Lead" …)
     group_selector: Optional[str] = None      # the discrete param that selects the channel
+    gates: List[str] = field(default_factory=list)   # on/off switches that must be on for this knob to matter
 
 
 @dataclass
@@ -303,6 +304,40 @@ def tag_plugin(p: PluginInfo, km: KnobMap) -> None:
         prm.kind, prm.fixed_value = kind, fixed
         prm.range = list(rng) if rng else None
     assign_channel_groups(p)
+    assign_gates(p)
+
+
+_SWITCH_SUFFIX_RX = re.compile(r"^(.+?)\s+(active|enabled?|on/off|on)$", re.I)      # "Overdrive Active"
+_SECTION_RX = re.compile(r"^active\s+(.+?)\s+section$", re.I)                      # "Active EQ Section"
+
+
+def assign_gates(p: PluginInfo) -> None:
+    """A two-state switch gates the knobs of its section, so knobs behind an OFF switch are not
+    searched: "Overdrive Active" → "Overdrive Gain" (name prefix); "Active Pre FX Section" → every
+    parameter listed after it up to the next "Active … Section" (sections are contiguous in the
+    plugin's parameter order). Switches that are forced on (`fixed`) gate nothing."""
+    for prm in p.params:
+        prm.gates = []
+    live = ("primary", "secondary", "ambience")
+    # 1. positional sections
+    section = None
+    for prm in p.params:
+        if prm.n_values == 2 and _SECTION_RX.match(prm.name):
+            section = prm if prm.kind in live else None
+            continue
+        if section is not None and prm.kind != "fixed":
+            prm.gates.append(section.name)
+    # 2. "<Thing> Active" switches gate "<Thing> …" knobs (gate listed before the section's)
+    for sw in p.params:
+        if not (sw.n_values == 2 and sw.kind in live):
+            continue
+        m = _SWITCH_SUFFIX_RX.match(sw.name)
+        if not m or _SECTION_RX.match(sw.name):
+            continue
+        prefix = m.group(1).strip().lower() + " "
+        for prm in p.params:
+            if prm is not sw and prm.kind != "fixed" and prm.name.lower().startswith(prefix) and sw.name not in prm.gates:
+                prm.gates.insert(0, sw.name)
 
 
 _SELECTOR_RX = re.compile(r"(amp|channel).*(type|select|model)|^channel$|^amp$|^mode$", re.I)

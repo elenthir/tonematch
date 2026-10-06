@@ -232,7 +232,7 @@ def test_search_only_touches_selected_channel(di):
     s = ToneSearch(cat, Renderer(cat), di, 44100, F.extract(di, 44100), SearchConfig())
     base = ChainSpec([Slot("plini")])
     space = s.space(base, {"primary"})
-    assert space[0]["param"] == "Amp Type"
+    assert space[0]["param"] == "Amp Type"          # selectors come first, before grouped knobs
     study = optuna.create_study(sampler=optuna.samplers.RandomSampler(seed=0))
     seen = set()
     for _ in range(12):
@@ -243,6 +243,50 @@ def test_search_only_touches_selected_channel(di):
         seen.add(sel)
         for ch in ("Clean", "Crunch", "Lead"):
             assert any(n.startswith(ch + " ") for n in names) == (ch == sel), (sel, names)
-        assert "Overdrive Gain" in names and "Cab L Mic Type" in names
+        assert "Cab L Mic Type" in names          # ungated knob: always suggested
         study.tell(t, 1.0)
     assert seen == {"Clean", "Crunch", "Lead"}
+
+
+def test_gates_from_switches():
+    p = _plini()
+    g = {q.name: q.gates for q in p.params}
+    assert g["Overdrive Gain"] == ["Overdrive Active", "Active Pre FX Section"]
+    assert g["Overdrive Level"] == ["Overdrive Active", "Active Pre FX Section"]
+    assert g["Compressor Threshold"] == ["Compressor Active", "Active Pre FX Section"]
+    assert g["Overdrive Active"] == ["Active Pre FX Section"]
+    assert "Active EQ Section" in g["Clean EQ 65 Hz"] and "Clean EQ Active" in g["Clean EQ 65 Hz"]
+    assert g["Clean EQ Active"] == ["Active EQ Section"]
+    assert g["Clean Gain"] == [] and g["Amp Type"] == [] and g["Cab L Mic Type"] == []
+    assert g["Active Pre FX Section"] == []
+
+
+def test_search_skips_knobs_behind_off_switches(di):
+    from tonematch.catalog import Catalog
+    from tonematch.search import SearchConfig, ToneSearch
+    from tonematch.chain import ChainSpec, Renderer, Slot
+    from tonematch import features as F
+    import optuna
+    p = _plini()
+    p.format = "mock"
+    cat = Catalog({"plini": p})
+    s = ToneSearch(cat, Renderer(cat), di, 44100, F.extract(di, 44100), SearchConfig())
+    base = ChainSpec([Slot("plini")])
+    space = s.space(base, {"primary", "secondary"})
+    order = [d["param"] for d in space]
+    assert order.index("Overdrive Active") < order.index("Overdrive Gain")
+    assert order.index("Active Pre FX Section") < order.index("Overdrive Active")
+    study = optuna.create_study(sampler=optuna.samplers.RandomSampler(seed=1))
+    seen_on = seen_off = False
+    for _ in range(16):
+        t = study.ask()
+        prm = s._suggest(t, space, base).slots[0].params
+        od_on = prm.get("Overdrive Active", 0.0) >= 0.5 and prm.get("Active Pre FX Section", 0.0) >= 0.5
+        assert ("Overdrive Gain" in prm) == od_on and ("Overdrive Level" in prm) == od_on
+        eq_on = prm.get("Active EQ Section", 0.0) >= 0.5 and prm.get("Clean EQ Active", 0.0) >= 0.5
+        if s._selected_group(0, "Amp Type", {(0, "Amp Type"): prm["Amp Type"]}, base) == "Clean":
+            assert ("Clean EQ 65 Hz" in prm) == eq_on
+        seen_on |= od_on
+        seen_off |= not od_on
+        study.tell(t, 1.0)
+    assert seen_on and seen_off
