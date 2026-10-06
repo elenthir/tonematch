@@ -45,12 +45,17 @@ def write_reaper_script(run_dir: Path, renderer: Renderer, spec: ChainSpec) -> P
                 dst = ndir / f"{i + 1:02d}_{_safe(src.stem)}.nam"
                 shutil.copy(src, dst)
                 db = h.gain_db()
+                has_ir = any(renderer.catalog.plugins[s2.plugin_id].format == "ir" for s2 in spec.slots[i + 1:])
+                # the search rendered the bare capture: no tone stack, no gate; IR only if we chained one.
+                # (NAM plugin parameter names as REAPER reports them: Input, Output, ToneStack, NoiseGateActive, IRToggle)
+                nam_params = [("Input", min(1.0, max(0.0, (db + 20.0) / 40.0))), ("ToneStack", 0.0),
+                              ("NoiseGateActive", 0.0), ("IRToggle", 1.0 if has_ir else 0.0)]
                 lua_slots.append(
-                    "  { name = %s, vendor = %s, preset = \"\", load_file = %s, note = %s,\n    params = { {\"Input\", %.6f} } }" % (
+                    "  { name = %s, vendor = %s, preset = \"\", load_file = %s, note = %s,\n    params = { %s } }" % (
                         _lua_str(nam_player.name if nam_player else "Neural Amp Modeler"),
                         _lua_str(nam_player.vendor if nam_player else ""), _lua_str(str(dst.resolve())),
                         _lua_str(f"load this capture in the NAM plugin, input {db:+.1f} dB"),
-                        min(1.0, max(0.0, (db + 20.0) / 40.0))))
+                        ", ".join("{%s, %.6f}" % (_lua_str(k), v) for k, v in nam_params)))
             else:
                 src = Path(h.current_path())
                 dst = ndir / f"{i + 1:02d}_{_safe(src.stem)}{src.suffix}"

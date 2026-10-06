@@ -89,6 +89,7 @@ def test_nam_chain_renders_and_exports(library, tmp_path):
     out = write_reaper_script(tmp_path / "run", r, spec)
     lua = out.read_text()
     assert "01_plexi.nam" in lua and "02_ir1.wav" in lua and '{"Input", 0.725000}' in lua
+    assert '{"ToneStack", 0.000000}' in lua and '{"NoiseGateActive", 0.000000}' in lua and '{"IRToggle", 1.000000}' in lua
     assert (tmp_path / "run/reaper/nam/01_plexi.nam").exists()
     lupa = pytest.importorskip("lupa")
     lupa.LuaRuntime().compile(lua)
