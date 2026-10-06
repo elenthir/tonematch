@@ -160,3 +160,89 @@ def test_resolve_plugin_path(tmp_path):
     flat = tmp_path / "Flat.vst3"
     flat.write_bytes(b"")
     assert resolve_plugin_path(flat, "Windows") == str(flat)
+
+
+PLINI_PARAMS = [  # real names reported by Archetype Plini X (n_values, values)
+    ("Input Gain", None, None), ("Output Gain", None, None), ("Gate Active", 2, ["Off", "On"]),
+    ("Gate Threshold", None, None), ("Transpose", 25, None), ("Doubler Active", 2, ["Off", "On"]),
+    ("Active Pre FX Section", 2, ["Off", "On"]), ("Compressor Active", 2, ["Off", "On"]),
+    ("Compressor Threshold", None, None), ("Octaver Active", 2, ["Off", "On"]),
+    ("Overdrive Active", 2, ["Off", "On"]), ("Overdrive Gain", None, None), ("Overdrive Level", None, None),
+    ("Delay 1 Active", 2, ["Off", "On"]), ("Delay 1 Sync Note", 21, None),
+    ("Active Amp Section", 2, ["Off", "On"]), ("Amp Type", 3, ["Clean", "Crunch", "Lead"]),
+    ("Clean Gain", None, None), ("Clean Bright", 2, ["Off", "On"]), ("Clean Bass", None, None),
+    ("Clean Master", None, None), ("Clean Presence", None, None), ("Clean Output", None, None),
+    ("Crunch Gain", None, None), ("Crunch Treble", None, None), ("Crunch Output", None, None),
+    ("Lead Gain", None, None), ("Lead Mid", None, None), ("Lead Output", None, None),
+    ("Active Cab Section", 2, ["Off", "On"]), ("Cab L Active", 2, ["Off", "On"]),
+    ("Cab L Mic Type", 7, ["57", "121", "421", "160", "414", "67", "87"]), ("Cab L Position", None, None),
+    ("Cab L Level", None, None), ("Cab L Pan", 101, None), ("Cab L Phase", 2, ["Off", "On"]),
+    ("R3", 1, ["x"]), ("Active EQ Section", 2, ["Off", "On"]), ("Clean EQ Active", 2, ["Off", "On"]),
+    ("Clean EQ 65 Hz", None, None), ("Clean EQ 1 kHz", None, None), ("Lead EQ 16 kHz", None, None),
+    ("Clean EQ High Pass", None, None), ("Active Post FX Section", 2, ["Off", "On"]),
+    ("Chorus Active", 2, ["Off", "On"]), ("Delay 2 Note", 21, None), ("Reverb Mix", None, None),
+    ("Bypass", 2, ["Off", "On"]),
+]
+
+
+def _plini():
+    p = PluginInfo(id="plini", name="Archetype Plini X", path="/p.vst3", vendor="Neural DSP", params=[
+        ParamInfo(n, n.lower().replace(" ", "_"), "float" if nv is None else "str", 0.5, n_values=nv, values=vals,
+                  raw_centers=[i / max(1, nv - 1) for i in range(nv)] if nv and nv <= 64 else None)
+        for n, nv, vals in PLINI_PARAMS])
+    tag_plugin(p, KnobMap.load())
+    return p
+
+
+def test_neural_dsp_real_parameter_names():
+    p = _plini()
+    kinds = {q.name: q.kind for q in p.params}
+    fixed = {q.name: q.fixed_value for q in p.params if q.kind == "fixed"}
+    assert fixed == {"Gate Active": 1.0, "Doubler Active": 0.0, "Active Amp Section": 1.0,
+                     "Active Cab Section": 1.0, "Cab L Active": 1.0}
+    for n in ("Amp Type", "Clean Gain", "Clean Bright", "Clean Bass", "Clean Master", "Clean Presence", "Lead Mid",
+              "Cab L Mic Type", "Overdrive Active", "Overdrive Gain", "Compressor Active", "Active Pre FX Section",
+              "Active EQ Section", "Clean EQ Active"):
+        assert kinds[n] == "primary", n
+    for n in ("Clean EQ 65 Hz", "Clean EQ 1 kHz", "Lead EQ 16 kHz", "Clean EQ High Pass", "Clean Output",
+              "Lead Output", "Cab L Position", "Cab L Level", "Cab L Phase", "Overdrive Level", "Compressor Threshold"):
+        assert kinds[n] == "secondary", n
+    for n in ("Octaver Active", "Delay 1 Active", "Chorus Active", "Reverb Mix", "Active Post FX Section", "Delay 2 Note"):
+        assert kinds[n] == "ambience", n
+    for n in ("Input Gain", "Output Gain", "Transpose", "Gate Threshold", "Cab L Pan", "Bypass", "R3", "Delay 1 Sync Note"):
+        assert kinds[n] == "excluded", n
+    # channel groups
+    g = {q.name: (q.group, q.group_selector) for q in p.params}
+    assert g["Clean Gain"] == ("Clean", "Amp Type") and g["Lead EQ 16 kHz"] == ("Lead", "Amp Type")
+    assert g["Crunch Output"] == ("Crunch", "Amp Type") and g["Amp Type"] == (None, None)
+    assert g["Cab L Mic Type"] == (None, None) and g["Overdrive Gain"] == (None, None)
+    assert len([q for q in p.params if q.kind == "primary"]) == 17
+
+
+def test_search_only_touches_selected_channel(di):
+    """With 'Amp Type' = Clean, no Crunch/Lead knob is suggested."""
+    from tonematch.catalog import Catalog
+    from tonematch.search import SearchConfig, ToneSearch
+    from tonematch.chain import ChainSpec, Renderer, Slot
+    from tonematch import features as F
+    import optuna
+    p = _plini()
+    p.format = "mock"   # never rendered in this test
+    cat = Catalog({"plini": p})
+    s = ToneSearch(cat, Renderer(cat), di, 44100, F.extract(di, 44100), SearchConfig())
+    base = ChainSpec([Slot("plini")])
+    space = s.space(base, {"primary"})
+    assert space[0]["param"] == "Amp Type"
+    study = optuna.create_study(sampler=optuna.samplers.RandomSampler(seed=0))
+    seen = set()
+    for _ in range(12):
+        t = study.ask()
+        spec = s._suggest(t, space, base)
+        names = set(spec.slots[0].params)
+        sel = s._selected_group(0, "Amp Type", {(0, "Amp Type"): spec.slots[0].params["Amp Type"]}, base)
+        seen.add(sel)
+        for ch in ("Clean", "Crunch", "Lead"):
+            assert any(n.startswith(ch + " ") for n in names) == (ch == sel), (sel, names)
+        assert "Overdrive Gain" in names and "Cab L Mic Type" in names
+        study.tell(t, 1.0)
+    assert seen == {"Clean", "Crunch", "Lead"}

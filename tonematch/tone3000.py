@@ -89,7 +89,7 @@ class Tone3000:
         self.token_file = token_file
         if self.tokens is None and token_file.exists():
             try:
-                self.tokens = Tokens(**json.loads(token_file.read_text()))
+                self.tokens = Tokens(**json.loads(token_file.read_text(encoding="utf-8")))
             except Exception:
                 self.tokens = None
 
@@ -123,7 +123,7 @@ class Tone3000:
         if self.tokens is None:
             return
         self.token_file.parent.mkdir(parents=True, exist_ok=True)
-        self.token_file.write_text(json.dumps(self.tokens.to_dict()))
+        self.token_file.write_text(json.dumps(self.tokens.to_dict()), encoding="utf-8")
         try:
             os.chmod(self.token_file, 0o600)
         except OSError:
@@ -298,6 +298,6 @@ class Tone3000:
                 "username": (tone.get("user") or {}).get("username"), "license": tone.get("license"),
                 "downloads_count": tone.get("downloads_count"), "favorites_count": tone.get("favorites_count"),
                 "size": m.get("size"), "model_id": m.get("id"), "model_name": m.get("name")}
-        (folder / (dst.name + ".json")).write_text(json.dumps(side, indent=1))
+        (folder / (dst.name + ".json")).write_text(json.dumps(side, indent=1), encoding="utf-8")
         log(f"  got    {title}  [{m.get('size')}] → {dst}")
         return dst

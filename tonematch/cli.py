@@ -23,6 +23,15 @@ from .search import Evaluation, SearchConfig, ToneSearch, propose_chains
 DEFAULT_CATALOG = Path(os.environ.get("TONEMATCH_HOME", Path.home() / ".tonematch")) / "catalog.json"
 
 
+def _utf8_console() -> None:
+    """Windows consoles default to cp1252; our output has arrows and stars."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def _log(s: str) -> None:
     print(time.strftime("%H:%M:%S"), s, flush=True)
 
@@ -169,7 +178,7 @@ def cmd_run(args) -> None:
         k, v = kv.split("=")
         weights[k] = float(v)
     target = F.extract(target_x, SR, keep_signal=args.aligned)
-    (run_dir / "target_features.json").write_text(json.dumps(target.to_dict()))
+    (run_dir / "target_features.json").write_text(json.dumps(target.to_dict()), encoding="utf-8")
 
     cfg = SearchConfig(minutes=args.minutes, allow_ambience=args.allow_ambience, keep_chains=args.keep_chains,
                        max_chains=args.max_chains, workers=args.workers, seed=args.seed, weights=weights,
@@ -207,7 +216,7 @@ def cmd_run(args) -> None:
 
 def cmd_export(args) -> None:
     run_dir = Path(args.run_dir)
-    payload = json.loads((run_dir / "best.json").read_text())
+    payload = json.loads((run_dir / "best.json").read_text(encoding="utf-8"))
     cat = load_catalog(args)
     spec = ChainSpec.from_dict(payload["spec"])
     from .export import write_reaper_script
@@ -216,28 +225,55 @@ def cmd_export(args) -> None:
 
 
 def cmd_selftest(args) -> None:
-    """Hide a random tone made with the mock plugins, then try to find it back. No real plugins needed."""
-    from .mock import mock_catalog
+    """Hide a random tone, then try to find it back from a *different* performance.
+    Default: the built-in mock plugins (no real plugins needed). --plugin NAME: the same test on a
+    real catalog plugin — the end-to-end check of the VST hosting path on this machine."""
     rng = np.random.default_rng(args.seed)
-    cat = mock_catalog()
-    renderer = Renderer(cat)
-    hidden = ChainSpec([Slot("mock_drive", {"Active": 1.0, "Drive": float(rng.uniform(0.2, 0.9)),
-                                            "Tone": float(rng.uniform()), "Level": 0.5}),
-                        Slot("mock_amp", {"Amp Gain": float(rng.uniform(0.2, 0.95)), "Amp Bass": float(rng.uniform()),
-                                          "Amp Middle": float(rng.uniform()), "Amp Treble": float(rng.uniform()),
-                                          "Amp Presence": float(rng.uniform()), "Amp Bright": float(rng.integers(2)),
-                                          "Cab Select": float(rng.integers(4)) / 3, "Mic Select": float(rng.integers(3)) / 2})])
+    if args.plugin:
+        cat = load_catalog(args)
+        plug = cat.find(args.plugin)
+        if plug is None or plug.error:
+            raise SystemExit(f"'{args.plugin}' is not a usable plugin in the catalog (see `tonematch list`)")
+        renderer = Renderer(cat)
+        hidden = ChainSpec([Slot(plug.id)])
+        for p in plug.params:
+            if p.kind != "primary":
+                continue
+            if p.raw_centers:
+                hidden.slots[0].params[p.name] = float(rng.choice(p.raw_centers))
+            elif p.type == "float":
+                hidden.slots[0].params[p.name] = float(rng.uniform(0.15, 0.85))
+        chains = [hidden.copy()]
+        for sl in chains[0].slots:
+            sl.params = {}
+        label = plug.name
+    else:
+        from .mock import mock_catalog
+        cat = mock_catalog()
+        renderer = Renderer(cat)
+        hidden = ChainSpec([Slot("mock_drive", {"Active": 1.0, "Drive": float(rng.uniform(0.2, 0.9)),
+                                                "Tone": float(rng.uniform()), "Level": 0.5}),
+                            Slot("mock_amp", {"Amp Gain": float(rng.uniform(0.2, 0.95)), "Amp Bass": float(rng.uniform()),
+                                              "Amp Middle": float(rng.uniform()), "Amp Treble": float(rng.uniform()),
+                                              "Amp Presence": float(rng.uniform()), "Amp Bright": float(rng.integers(2)),
+                                              "Cab Select": float(rng.integers(4)) / 3, "Mic Select": float(rng.integers(3)) / 2})])
+        chains = None
+        label = "mock plugins"
     di = synth_di(SR, 10.0, seed=args.seed + 1)
     other_perf = synth_di(SR, 12.0, seed=args.seed + 2, tempo_bpm=104)
+    _log(f"selftest on {label}: rendering the hidden tone …")
     target_x = renderer.render(hidden, other_perf, SR)
+    if not np.any(np.abs(target_x) > 1e-5):
+        raise SystemExit("the hidden tone rendered silence — the plugin did not process audio (licence? bypassed?)")
     run_dir = Path(args.out)
     run_dir.mkdir(parents=True, exist_ok=True)
     save_audio(run_dir / "hidden_target.wav", target_x, SR)
     target = F.extract(target_x, SR)
     cfg = SearchConfig(minutes=args.minutes, keep_chains=2, seed=args.seed, workers=args.workers)
-    chains = propose_chains(cat, cfg)
+    if chains is None:
+        chains = propose_chains(cat, cfg)
     search = ToneSearch(cat, renderer, di, SR, target, cfg, on_progress=_log)
-    base = search.evaluate(ChainSpec([Slot("mock_drive"), Slot("mock_amp")]), 10, "baseline")[0]
+    base = search.evaluate(ChainSpec([Slot(s.plugin_id) for s in hidden.slots]), 10, "baseline")[0]
     floor = search.evaluate(hidden, 10, "floor")[0]
     search.best = None
     search.improvements = []
@@ -254,8 +290,9 @@ def cmd_selftest(args) -> None:
     for s in result.best.spec.slots:
         print("  ", s.plugin_id, {k: round(v, 2) for k, v in s.params.items()})
     print(f"\nloss: defaults {base:.2f} → found {result.best.loss:.2f}   (hidden chain itself on your DI: {floor:.2f})")
-    print(f"renders: {result.n_evals} in {result.elapsed / 60:.1f} min. Files in {run_dir}/")
-    ok = result.best.loss < 0.5 * base
+    print(f"renders: {result.n_evals} in {result.elapsed / 60:.1f} min. Files in {run_dir}/ "
+          f"(best.md, best.wav vs hidden_target.wav, reaper/apply_tone.lua)")
+    ok = result.best.loss < 0.5 * base or result.best.loss < floor + 1.0
     print("SELFTEST", "PASS" if ok else "FAIL")
     if not ok:
         sys.exit(1)
@@ -386,16 +423,19 @@ def build_parser() -> argparse.ArgumentParser:
     common(p)
     p.set_defaults(func=cmd_export)
 
-    p = sub.add_parser("selftest", help="end-to-end check with mock plugins (no real plugins needed)")
+    p = sub.add_parser("selftest", help="end-to-end check: hide a tone, find it back (mock plugins, or --plugin NAME)")
     p.add_argument("--minutes", type=float, default=2.0)
     p.add_argument("--out", default="runs/selftest")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--workers", type=int, default=1)
+    p.add_argument("--plugin", help="run the test on this real plugin from the catalog instead of the mocks")
+    common(p)
     p.set_defaults(func=cmd_selftest)
     return ap
 
 
 def main(argv: Optional[List[str]] = None) -> None:
+    _utf8_console()
     args = build_parser().parse_args(argv)
     args.func(args)
 

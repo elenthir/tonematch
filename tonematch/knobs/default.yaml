@@ -151,7 +151,7 @@ params:                      # defaults applied to every plugin
     - "echo"
     - "chorus"
     - "flang"
-    - "phas"
+    - "phaser"
     - "tremolo"
     - "vibrato"
     - "wah"
@@ -161,6 +161,9 @@ params:                      # defaults applied to every plugin
     - "shimmer"
   secondary:                 # checked before `primary`: fine-tuning knobs that are not worth screening on
     - "\\beq\\b.*(gain|freq|q\\b|band)|band \\d"   # graphic / parametric EQ bands
+    - "\\beq\\b.*\\d+ ?k?hz\\b"                 # "Clean EQ 65 Hz" … "Lead EQ 16 kHz"
+    - "\\boutput\\b"                             # per-channel output levels
+    - "\\bphase\\b|polarity"                     # cab mic polarity switches
     - "(low|high|hi|lo)[ -]?(cut|pass)|hpf|lpf"
     - "mic.*(position|distance|level|pan|phase|delay)"
     - "\\blevel\\b|\\bvolume\\b|\\bmix\\b"
@@ -201,10 +204,14 @@ plugins:
     vendor: "Neural DSP"          # the rule also matches "<name> (Neural DSP)", i.e. any Neural DSP plugin
     role: amp_suite
     fixed:                             # name regex -> normalised value
-      "noise gate.*\\b(active|enabled?|on|on/off)\\b": 1.0
+      "\\b(noise )?gate\\b.*\\b(active|enabled?|on|on/off)\\b": 1.0
       "(doubler|transpose|tuner).*\\b(active|enabled?|on|on/off)\\b": 0.0
+      "active (amp|cab) section|cab [lr12] active": 1.0     # the amp and the cab are never switched off
+    ambience:
+      - "active post fx section"       # chorus / delay / reverb block
     excluded:
       - "gate.*(threshold|release|attack|hold)"   # leave gate at default
       - "doubler"
       - "transpose"
-    # ambience sections (delay/reverb) are matched by the global `ambience` rules
+    # the amp channel selector ("Amp Type": Clean / Crunch / Lead) groups the "Clean …", "Crunch …",
+    # "Lead …" knobs: only the selected channel's knobs are searched (see catalog.tag_plugin)

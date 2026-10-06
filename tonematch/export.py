@@ -76,10 +76,10 @@ def write_reaper_script(run_dir: Path, renderer: Renderer, spec: ChainSpec) -> P
         lua_slots.append(
             "  { name = %s, vendor = %s, preset = %s,\n    params = {\n      %s\n    } }" % (
                 _lua_str(info.name), _lua_str(info.vendor or ""), _lua_str(preset_path), ",\n      ".join(params)))
-    template = resources.files("tonematch").joinpath("reaper/apply_tone_template.lua").read_text()
+    template = resources.files("tonematch").joinpath("reaper/apply_tone_template.lua").read_text(encoding="utf-8")
     lua = template.replace("__CHAIN__", "{\n" + ",\n".join(lua_slots) + "\n}")
     out = rdir / "apply_tone.lua"
-    out.write_text(lua)
+    out.write_text(lua, encoding="utf-8")
     return out
 
 
@@ -93,7 +93,7 @@ def write_checkpoint(run_dir: Path, renderer: Renderer, ev: Evaluation, di: np.n
                "spec": ev.spec.to_dict(), "plugins": desc}
     if result is not None:
         payload["search"] = result.to_dict()
-    (run_dir / "best.json").write_text(json.dumps(payload, indent=1))
+    (run_dir / "best.json").write_text(json.dumps(payload, indent=1), encoding="utf-8")
     write_reaper_script(run_dir, renderer, ev.spec)
     if write_audio:
         y = renderer.render(ev.spec, di, sr)
@@ -102,7 +102,7 @@ def write_checkpoint(run_dir: Path, renderer: Renderer, ev: Evaluation, di: np.n
             save_audio(run_dir / "target.wav", target, sr)
         if not (run_dir / "di.wav").exists():
             save_audio(run_dir / "di.wav", di, sr)
-    (run_dir / "best.md").write_text(describe_markdown(payload))
+    (run_dir / "best.md").write_text(describe_markdown(payload), encoding="utf-8")
 
 
 def describe_markdown(payload: dict) -> str:

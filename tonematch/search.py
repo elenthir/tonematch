@@ -266,13 +266,15 @@ class ToneSearch:
                 if p.kind not in kinds:
                     continue
                 name = f"{si}|{p.name}"
+                grp = {"group": p.group, "selector": p.group_selector} if p.group else {}
                 if p.n_values and p.n_values > 1 and p.type != "float" or (p.n_values and p.n_values <= 12):
                     if inc is not None:    # refine: freeze discrete choices
                         continue
                     if p.n_values <= 64:
-                        out.append({"name": name, "slot": si, "param": p.name, "kind": "cat", "choices": p.raw_centers})
+                        out.append({"name": name, "slot": si, "param": p.name, "kind": "cat", "choices": p.raw_centers,
+                                    "values": p.values, **grp})
                     else:
-                        out.append({"name": name, "slot": si, "param": p.name, "kind": "int", "n": p.n_values})
+                        out.append({"name": name, "slot": si, "param": p.name, "kind": "int", "n": p.n_values, **grp})
                     continue
                 lo, hi = (p.range or (0.0, 1.0))
                 if prior and _is_gainish(p):
@@ -281,12 +283,31 @@ class ToneSearch:
                 if inc is not None and p.name in inc:
                     c, hw = inc[p.name], self.cfg.refine_halfwidth
                     lo, hi = max(lo, c - hw), min(hi, c + hw)
-                out.append({"name": name, "slot": si, "param": p.name, "kind": "float", "lo": lo, "hi": hi})
+                out.append({"name": name, "slot": si, "param": p.name, "kind": "float", "lo": lo, "hi": hi, **grp})
+        # selectors first, so grouped knobs can be made conditional on them
+        selectors = {(e["slot"], e["selector"]) for e in out if e.get("selector")}
+        out.sort(key=lambda d: 0 if (d["slot"], d["param"]) in selectors else 1)
         return out
+
+    def _selected_group(self, slot_idx: int, selector: str, chosen: Dict[tuple, float], base: ChainSpec) -> Optional[str]:
+        """Display value of a channel selector: from this trial, else the base spec, else the default."""
+        info = self.catalog.plugins[base.slots[slot_idx].plugin_id]
+        sel = info.param(selector)
+        if sel is None or not sel.values:
+            return None
+        raw = chosen.get((slot_idx, selector))
+        if raw is None:
+            raw = base.slots[slot_idx].params.get(selector, sel.fixed_value if sel.kind == "fixed" else sel.default)
+        idx = int(round(float(raw) * (len(sel.values) - 1))) if len(sel.values) > 1 else 0
+        return str(sel.values[max(0, min(idx, len(sel.values) - 1))]).strip()
 
     def _suggest(self, trial: optuna.Trial, space: List[dict], base: ChainSpec) -> ChainSpec:
         spec = base.copy()
+        chosen: Dict[tuple, float] = {}
         for d in space:
+            if d.get("group"):
+                if self._selected_group(d["slot"], d["selector"], chosen, base) != d["group"]:
+                    continue                      # knob of a channel that is not selected: untouched
             if d["kind"] == "float":
                 v = trial.suggest_float(d["name"], d["lo"], d["hi"])
             elif d["kind"] == "cat":
@@ -295,6 +316,7 @@ class ToneSearch:
                 i = trial.suggest_int(d["name"], 0, d["n"] - 1)
                 v = i / max(1, d["n"] - 1)
             spec.slots[d["slot"]].params[d["param"]] = float(v)
+            chosen[(d["slot"], d["param"])] = float(v)
         return spec
 
     def _study(self, name: str, sampler) -> optuna.Study:

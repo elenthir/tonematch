@@ -51,9 +51,9 @@ class KnobMap:
         km = KnobMap()
         docs = []
         if include_default:
-            docs.append(yaml.safe_load(resources.files("tonematch").joinpath("knobs/default.yaml").read_text()))
+            docs.append(yaml.safe_load(resources.files("tonematch").joinpath("knobs/default.yaml").read_text(encoding="utf-8")))
         for f in extra_files or []:
-            docs.append(yaml.safe_load(Path(f).read_text()) or {})
+            docs.append(yaml.safe_load(Path(f).read_text(encoding="utf-8")) or {})
         for d in docs:
             km._merge(d)
         return km

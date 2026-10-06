@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import platform
 import subprocess
@@ -26,6 +27,8 @@ class ParamInfo:
     kind: str = "secondary"         # primary | secondary | ambience | fixed | excluded
     fixed_value: Optional[float] = None
     range: Optional[List[float]] = None       # narrowed normalised search range
+    group: Optional[str] = None               # channel this knob belongs to ("Clean", "Lead" …)
+    group_selector: Optional[str] = None      # the discrete param that selects the channel
 
 
 @dataclass
@@ -60,11 +63,11 @@ class Catalog:
 
     def save(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(json.dumps({k: asdict(v) for k, v in self.plugins.items()}, indent=1))
+        Path(path).write_text(json.dumps({k: asdict(v) for k, v in self.plugins.items()}, indent=1), encoding="utf-8")
 
     @staticmethod
     def load(path: str | Path) -> "Catalog":
-        raw = json.loads(Path(path).read_text())
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
         cat = Catalog()
         for k, v in raw.items():
             v["params"] = [ParamInfo(**p) for p in v.get("params", [])]
@@ -295,8 +298,42 @@ def tag_plugin(p: PluginInfo, km: KnobMap) -> None:
         # discrete params with huge value lists (e.g. 300 IRs) are only searched as primary
         if kind == "secondary" and prm.n_values and prm.n_values > 64:
             kind = "excluded"
+        if prm.n_values == 1 and kind != "fixed":      # nothing to choose
+            kind = "excluded"
         prm.kind, prm.fixed_value = kind, fixed
         prm.range = list(rng) if rng else None
+    assign_channel_groups(p)
+
+
+_SELECTOR_RX = re.compile(r"(amp|channel).*(type|select|model)|^channel$|^amp$|^mode$", re.I)
+
+
+def assign_channel_groups(p: PluginInfo) -> None:
+    """Multi-channel amps expose "Clean Gain", "Crunch Gain", "Lead Gain" … and a selector
+    ("Amp Type" = Clean / Crunch / Lead). Tag each knob with the channel it belongs to so the
+    search only touches the selected channel's knobs."""
+    for prm in p.params:
+        prm.group = prm.group_selector = None
+    for sel in p.params:
+        if sel.kind != "primary" or not sel.values or not (2 <= (sel.n_values or 0) <= 12):
+            continue
+        if not _SELECTOR_RX.search(sel.name):
+            continue
+        hits: Dict[str, int] = {}
+        for v in sel.values:
+            prefix = str(v).strip().lower() + " "
+            if len(prefix) < 3:
+                continue
+            for prm in p.params:
+                if prm is sel or prm.group is not None:
+                    continue
+                if prm.name.lower().startswith(prefix):
+                    prm.group, prm.group_selector = str(v).strip(), sel.name
+                    hits[str(v)] = hits.get(str(v), 0) + 1
+        if len(hits) < 2:          # a coincidence, not a channel layout: undo
+            for prm in p.params:
+                if prm.group_selector == sel.name:
+                    prm.group = prm.group_selector = None
 
 
 def scan(dirs: Optional[List[str | Path]] = None, km: Optional[KnobMap] = None,
