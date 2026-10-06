@@ -243,6 +243,12 @@ def cmd_selftest(args) -> None:
                 hidden.slots[0].params[p.name] = float(rng.choice(p.raw_centers))
             elif p.type == "float":
                 hidden.slots[0].params[p.name] = float(rng.uniform(0.15, 0.85))
+        from .catalog import IR_LOADER_ID
+        if plug.format == "nam" and plug.role == "amp" and IR_LOADER_ID in cat.plugins:
+            # an amp-only capture is always played through a cab: hide a random IR with it
+            ir = cat.plugins[IR_LOADER_ID].param("IR")
+            n = ir.n_values or 1
+            hidden.slots.append(Slot(IR_LOADER_ID, {"IR": float(rng.integers(n)) / max(1, n - 1)}))
         chains = [hidden.copy()]
         for sl in chains[0].slots:
             sl.params = {}
