@@ -99,12 +99,18 @@ IR_DIR = TONEMATCH_HOME / "ir"
 IR_LOADER_ID = "irloader"
 
 
-def nam_role(gear: str) -> str:
-    """Which chain slot a capture fills, from its gear type."""
+_RIG_RX = re.compile(r"full[ _-]?rig|amp[ _+&-]*cab|\b[124]x1[02]\b|\bsm ?57\b|\br ?121\b|\bmd ?421\b|\bcab(inet)?\b|\bir\b", re.I)
+
+
+def nam_role(gear: str, hints: str = "") -> str:
+    """Which chain slot a capture fills, from its gear type. `hints` (title, file name, tags)
+    catches captures filed as plain "amp" on TONE3000 that are really full rigs with the cab."""
     if gear in ("amp-cab", "full-rig", "cab-amp"):
         return "amp_suite"
     if gear in ("pedal", "outboard"):
         return "drive"
+    if gear in ("amp", "", "preamp") and _RIG_RX.search(hints or ""):
+        return "amp_suite"
     return "amp"                       # amp / preamp / unknown: needs an IR after it
 
 
@@ -124,11 +130,14 @@ def scan_nam_library(nam_dirs: Optional[List[str | Path]] = None,
             bits = [b for b in (meta.get("gear_make"), meta.get("gear_model")) if b and b not in title]
             name = f"{title} ({' '.join(bits)})" if bits else title
             pid = "nam:" + str(f.relative_to(d)).replace("\\", "/")
+            hints = " ".join([str(title), f.stem, " ".join(map(str, meta.get("tags") or []))])
+            role = nam_role(gear, hints)
             out[pid] = PluginInfo(
                 id=pid, name=f"NAM: {name}", path=str(f), vendor=str(meta.get("modeled_by") or meta.get("username") or "NAM"),
-                format="nam", role=nam_role(gear),
+                format="nam", role=role,
                 params=[ParamInfo("Input Gain", "input_gain", "float", 0.5, label="dB", kind="primary")],
-                extra={"gear": gear, "tone_type": meta.get("tone_type"), "tags": meta.get("tags") or [],
+                extra={"gear": "amp-cab" if role == "amp_suite" and gear not in ("amp-cab", "full-rig") else gear,
+                       "gear_listed": gear, "tone_type": meta.get("tone_type"), "tags": meta.get("tags") or [],
                        "make": meta.get("make") or meta.get("gear_make"), "tone_url": meta.get("url"),
                        "size": meta.get("size")})
     irs: List[str] = []

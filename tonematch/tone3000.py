@@ -299,5 +299,5 @@ class Tone3000:
                 "downloads_count": tone.get("downloads_count"), "favorites_count": tone.get("favorites_count"),
                 "size": m.get("size"), "model_id": m.get("id"), "model_name": m.get("name")}
         (folder / (dst.name + ".json")).write_text(json.dumps(side, indent=1), encoding="utf-8")
-        log(f"  got    {title}  [{m.get('size')}] → {dst}")
+        log(f"  got    {title}  {'[' + str(m.get('size')) + '] ' if m.get('size') else ''}→ {dst}")
         return dst

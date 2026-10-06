@@ -168,3 +168,13 @@ def test_cli_parses_tone3000_and_run_flags():
     assert a.t3k_cmd == "fetch" and a.sizes == ["lite"]
     a = build_parser().parse_args(["run", "--target", "t.wav", "--out", "o", "--tone3000", "plexi", "--nam-dir", "x"])
     assert a.tone3000 == "plexi" and a.nam_dir == ["x"] and a.max_prescreen == 300
+
+
+def test_full_rig_captures_filed_as_amp_become_suites():
+    from tonematch.catalog import nam_role
+    assert nam_role("amp") == "amp"
+    assert nam_role("amp", "Full Rig Peavey 5150 + Mesa 4x12") == "amp_suite"
+    assert nam_role("amp", "5150 Green NAM Profiles + SD1 + Mesa V30 Full_Rig_5150_Green_SD1_Scooped_Mesa_OS_SM57-58") == "amp_suite"
+    assert nam_role("amp", "Peavey - 5150 II (0.5.2) PEAVEY_-_5150_II_-_CRUNCH_-_B1_-_G4.0 1990s boost") == "amp"
+    assert nam_role("amp", "APP-EVH-5150III-Stealth-100w APP-EVH-Stealth100-Dialled high gain") == "amp"
+    assert nam_role("amp-cab", "anything") == "amp_suite" and nam_role("pedal", "Full rig") == "drive"
