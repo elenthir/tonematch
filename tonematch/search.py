@@ -127,13 +127,15 @@ def propose_chains(catalog: Catalog, cfg: SearchConfig, include: Optional[List[s
             ids.append(p.id)
         return [ChainSpec([Slot(i) for i in ids])]
 
+    SUPPORT_ROLES = ("cab", "eq", "compressor", "gate")   # --include picks amps/suites/drives; support plugins stay available
+
     def ok(p: PluginInfo) -> bool:
         if p.error:
             return False
         hay = f"{p.name} {p.id}".lower()
-        if include and not any(s.lower() in hay for s in include):
-            return False
         if exclude and any(s.lower() in hay for s in exclude):
+            return False
+        if include and p.role not in SUPPORT_ROLES and not any(s.lower() in hay for s in include):
             return False
         return True
 
@@ -504,11 +506,17 @@ class ToneSearch:
                 incumbent = rs
             self.on_progress(f"    best {rstudy.best_value:.2f}  ({len(rstudy.trials)} trials)")
 
-        # ---- final: score the incumbent on a long excerpt and make sure `best` is consistent
-        loss, terms = self.evaluate(incumbent, cfg.final_seconds, "final")
-        final = Evaluation(incumbent, loss, terms, "final", self.elapsed, self.n_evals)
-        if self.best is None or self.best.spec.key != incumbent.key or self.best.loss > loss * 1.5:
-            self.best = final
+        # ---- final: losses from different stages were measured on different excerpt lengths, so
+        # re-score the refine incumbent and the global best on the same long excerpt and keep the lower
+        finalists = [incumbent]
+        if self.best is not None and self.best.spec.to_dict() != incumbent.to_dict():
+            finalists.append(self.best.spec)
+        scored = []
+        for spec in finalists:
+            loss, terms = self.evaluate(spec, cfg.final_seconds, "final")
+            scored.append((loss, terms, spec))
+        loss, terms, incumbent = min(scored, key=lambda t: t[0])
+        self.best = Evaluation(incumbent, loss, terms, "final", self.elapsed, self.n_evals)
         self.stages.append({"stage": "final", "elapsed": self.elapsed, "n_evals": self.n_evals, "loss": loss, "terms": terms})
         ranking_out = [{"chain": k, "screen_loss": v[0],
                         "optimized_loss": studies[k][0].best_value if k in studies else None} for k, v in ranking]

@@ -127,7 +127,9 @@ def scan_nam_library(nam_dirs: Optional[List[str | Path]] = None,
             meta = read_metadata(f)
             gear = normalize_gear(str(meta.get("gear_type") or meta.get("gear") or ""))
             title = meta.get("title") or meta.get("name") or f.stem
-            bits = [b for b in (meta.get("gear_make"), meta.get("gear_model")) if b and b not in title]
+            bits = [b for b in (meta.get("gear_make"), meta.get("gear_model"))
+                    if b and str(b).strip() and not str(b).lower().startswith("tz-")      # trainer placeholders
+                    and str(b).lower() not in ("unknown", "none", "n/a") and str(b) not in title]
             name = f"{title} ({' '.join(bits)})" if bits else title
             pid = "nam:" + str(f.relative_to(d)).replace("\\", "/")
             hints = " ".join([str(title), f.stem, " ".join(map(str, meta.get("tags") or []))])

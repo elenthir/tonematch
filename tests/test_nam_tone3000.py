@@ -178,3 +178,22 @@ def test_full_rig_captures_filed_as_amp_become_suites():
     assert nam_role("amp", "Peavey - 5150 II (0.5.2) PEAVEY_-_5150_II_-_CRUNCH_-_B1_-_G4.0 1990s boost") == "amp"
     assert nam_role("amp", "APP-EVH-5150III-Stealth-100w APP-EVH-Stealth100-Dialled high gain") == "amp"
     assert nam_role("amp-cab", "anything") == "amp_suite" and nam_role("pedal", "Full rig") == "drive"
+
+
+def test_include_filter_keeps_support_plugins(library):
+    nam, ir = library
+    cat = Catalog(scan_nam_library([nam], [ir]))
+    keys = [c.key for c in propose_chains(cat, SearchConfig(), include=["plexi"])]
+    assert keys == ["nam:1-plexi/plexi.nam > irloader"]           # the IR loader survives --include
+    with pytest.raises(SystemExit):           # excluding the only cab leaves nothing to chain
+        propose_chains(cat, SearchConfig(), include=["plexi"], exclude=["ir loader"])
+
+
+def test_placeholder_metadata_not_in_capture_name(tmp_path):
+    nam = tmp_path / "nam"
+    nam.mkdir()
+    (nam / "x.nam").write_bytes((DATA / "wavenet.nam").read_bytes())
+    (nam / "x.nam.json").write_text(json.dumps({"title": "OB1 5150 III Full Rig", "gear": "amp-cab",
+                                                "gear_make": "tz-make", "gear_model": "tz-model"}))
+    (p,) = scan_nam_library([nam], [tmp_path / "none"]).values()
+    assert p.name == "NAM: OB1 5150 III Full Rig"
