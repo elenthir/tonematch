@@ -290,3 +290,36 @@ def test_search_skips_knobs_behind_off_switches(di):
         seen_off |= not od_on
         study.tell(t, 1.0)
     assert seen_on and seen_off
+
+
+MESA_PARAMS = [  # Mesa Boogie Mark IIC+ Suite (Neural DSP) naming: "<Section> Section Active", "Mark II C++ …"
+    ("Doubler Active", 2), ("Gate Amount", None), ("Stompbox Section Active", 2), ("Compressor Pedal Active", 2),
+    ("Compressor Pedal Sustain", None), ("Overdrive 1 Pedal Active", 2), ("Overdrive 1 Pedal Drive", None),
+    ("Amp Section Active", 2), ("Amp Type", 2), ("Mark II C++ Volume 1", None), ("Mark II C++ Master 1", None),
+    ("Mark II C++ Pull Deep", 2), ("Mark II C++ Class", 2), ("Mark II C++ Treble", None), ("Mark II C++ EQ Switch", 2),
+    ("Mark II C++ EQ80", None), ("Mark II C++ EQ2200", None), ("Cab Section Active", 2), ("Cab Type", 3),
+    ("Cab L Active", 2), ("First Cab L Mic IR", 21), ("EQ Section Active", 2), ("EQ C++ Active", 2),
+    ("Post FX Section Active", 2), ("Reverb Mix", None), ("Output Gain", None),
+]
+
+
+def test_mesa_naming_variants():
+    p = PluginInfo(id="mesa", name="Mesa Boogie Mark IIC+ Suite", path="/m.vst3", vendor="Neural DSP", params=[
+        ParamInfo(n, n.lower().replace(" ", "_"), "float" if nv is None else "str", 0.5, n_values=nv,
+                  values=[f"v{i}" for i in range(nv)] if nv else None,
+                  raw_centers=[i / max(1, nv - 1) for i in range(nv)] if nv else None) for n, nv in MESA_PARAMS])
+    tag_plugin(p, KnobMap.load())
+    kinds = {q.name: q.kind for q in p.params}
+    fixed = {q.name: q.fixed_value for q in p.params if q.kind == "fixed"}
+    assert fixed == {"Doubler Active": 0.0, "Amp Section Active": 1.0, "Cab Section Active": 1.0, "Cab L Active": 1.0}
+    assert kinds["Post FX Section Active"] == "ambience"
+    for n in ("Stompbox Section Active", "Overdrive 1 Pedal Active", "Overdrive 1 Pedal Drive", "Amp Type",
+              "Mark II C++ Volume 1", "Mark II C++ Master 1", "Mark II C++ Pull Deep", "Mark II C++ Class",
+              "Mark II C++ Treble", "Mark II C++ EQ Switch", "Cab Type", "First Cab L Mic IR", "EQ Section Active"):
+        assert kinds[n] == "primary", n
+    assert kinds["Mark II C++ EQ80"] == "secondary" and kinds["Gate Amount"] == "secondary"
+    g = {q.name: q.gates for q in p.params}
+    assert g["Overdrive 1 Pedal Drive"] == ["Overdrive 1 Pedal Active", "Stompbox Section Active"]
+    assert g["Mark II C++ Treble"] == []                      # amp section is forced on: no gate
+    assert g["Reverb Mix"] == ["Post FX Section Active"]
+    assert g["Mark II C++ EQ80"] == []                        # EQ Switch is not a "<x> Active" switch

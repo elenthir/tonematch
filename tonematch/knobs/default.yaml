@@ -206,9 +206,12 @@ plugins:
     fixed:                             # name regex -> normalised value
       "\\b(noise )?gate\\b.*\\b(active|enabled?|on|on/off)\\b": 1.0
       "(doubler|transpose|tuner).*\\b(active|enabled?|on|on/off)\\b": 0.0
-      "active (amp|cab) section|cab [lr12] active": 1.0     # the amp and the cab are never switched off
+      "active (amp|cab) section|(amp|cab) section active|cab [lr12] active": 1.0   # amp and cab are never switched off
     ambience:
-      - "active post fx section"       # chorus / delay / reverb block
+      - "active post fx section|post fx section active"       # chorus / delay / reverb block
+    primary:
+      - "\\bvolume 1\\b|\\bmaster 1\\b"   # Mesa Mark series: "Volume 1" is the gain knob
+      - "\\bpull\\b|\\bclass\\b|\\bswitch\\b|\\bdeep\\b|\\bshift\\b"   # pull-pots and toggles
     excluded:
       - "gate.*(threshold|release|attack|hold)"   # leave gate at default
       - "doubler"

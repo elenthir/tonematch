@@ -308,7 +308,7 @@ def tag_plugin(p: PluginInfo, km: KnobMap) -> None:
 
 
 _SWITCH_SUFFIX_RX = re.compile(r"^(.+?)\s+(active|enabled?|on/off|on)$", re.I)      # "Overdrive Active"
-_SECTION_RX = re.compile(r"^active\s+(.+?)\s+section$", re.I)                      # "Active EQ Section"
+_SECTION_RX = re.compile(r"^active\s+(.+?)\s+section$|^(.+?)\s+section\s+active$", re.I)   # "Active EQ Section" / "EQ Section Active"
 
 
 def assign_gates(p: PluginInfo) -> None:
